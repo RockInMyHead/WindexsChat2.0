@@ -1,10 +1,19 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Send } from "lucide-react";
+import { Send, Mic, Paperclip } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import ChatMessage from "@/components/ChatMessage";
 import ChatHeader from "@/components/ChatHeader";
+import { ChatSidebar } from "@/components/ChatSidebar";
+import { SidebarProvider } from "@/components/ui/sidebar";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface Message {
   role: "user" | "assistant";
@@ -17,8 +26,10 @@ const Chat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedModel, setSelectedModel] = useState("lite");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const initialMessage = location.state?.initialMessage;
@@ -124,9 +135,30 @@ const Chat = () => {
     }
   };
 
+  const handleFileUpload = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Здесь будет логика загрузки файла
+      console.log("File selected:", file.name);
+    }
+  };
+
+  const handleVoiceRecord = () => {
+    // Здесь будет логика записи аудио
+    console.log("Voice recording started");
+  };
+
   return (
-    <div className="flex flex-col h-screen bg-background">
-      <ChatHeader onNewChat={() => navigate("/")} />
+    <SidebarProvider>
+      <div className="flex min-h-screen w-full bg-background">
+        <ChatSidebar onNewChat={() => navigate("/")} />
+        
+        <div className="flex flex-col flex-1 h-screen">
+          <ChatHeader onNewChat={() => navigate("/")} />
       
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-4 py-8">
@@ -164,33 +196,83 @@ const Chat = () => {
         </div>
       </div>
 
-      <div className="border-t border-border bg-background">
-        <div className="max-w-3xl mx-auto px-4 py-4">
-          <form onSubmit={handleSubmit} className="flex gap-2">
-            <Textarea
-              ref={textareaRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Отправьте сообщение..."
-              className="min-h-[52px] max-h-[200px] resize-none"
-              disabled={isLoading}
-            />
-            <Button
-              type="submit"
-              size="icon"
-              className="h-[52px] w-[52px] shrink-0"
-              disabled={!input.trim() || isLoading}
-            >
-              <Send className="h-5 w-5" />
-            </Button>
-          </form>
-          <p className="text-xs text-muted-foreground text-center mt-2">
-            WindecsAI может допускать ошибки. Проверяйте важную информацию.
-          </p>
+          <div className="border-t border-border bg-background">
+            <div className="max-w-3xl mx-auto px-4 py-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Select value={selectedModel} onValueChange={setSelectedModel}>
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="lite">WindecsAI Lite</SelectItem>
+                    <SelectItem value="pro">WindecsAI Pro</SelectItem>
+                  </SelectContent>
+                </Select>
+                <span className="text-xs text-muted-foreground">
+                  {selectedModel === "pro" ? "Максимальная производительность" : "Быстрые ответы"}
+                </span>
+              </div>
+              
+              <form onSubmit={handleSubmit} className="flex gap-2">
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-[52px] w-[52px] shrink-0"
+                    onClick={handleFileUpload}
+                    disabled={isLoading}
+                  >
+                    <Paperclip className="h-5 w-5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-[52px] w-[52px] shrink-0"
+                    onClick={handleVoiceRecord}
+                    disabled={isLoading}
+                  >
+                    <Mic className="h-5 w-5" />
+                  </Button>
+                </div>
+                
+                <Textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Отправьте сообщение..."
+                  className="min-h-[52px] max-h-[200px] resize-none"
+                  disabled={isLoading}
+                />
+                
+                <Button
+                  type="submit"
+                  size="icon"
+                  className="h-[52px] w-[52px] shrink-0"
+                  disabled={!input.trim() || isLoading}
+                >
+                  <Send className="h-5 w-5" />
+                </Button>
+              </form>
+              
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                onChange={handleFileChange}
+                accept="*/*"
+              />
+              
+              <p className="text-xs text-muted-foreground text-center mt-2">
+                WindecsAI может допускать ошибки. Проверяйте важную информацию.
+              </p>
+            </div>
+          </div>
         </div>
       </div>
-    </div>
+    </SidebarProvider>
   );
 };
 
