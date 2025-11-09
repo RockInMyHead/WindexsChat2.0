@@ -35,7 +35,7 @@ export function ChatSidebar({ onNewChat }: ChatSidebarProps) {
   ]);
 
   return (
-    <Sidebar className={collapsed ? "w-14" : "w-64"} collapsible="icon">
+    <Sidebar className={collapsed ? "w-14" : "w-64"} collapsible="icon" side="left">
       <SidebarContent className="bg-background border-r border-border">
         <div className="p-4 flex items-center justify-between">
           {!collapsed && (

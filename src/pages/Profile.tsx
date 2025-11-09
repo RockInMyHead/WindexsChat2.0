@@ -11,19 +11,20 @@ const Profile = () => {
   return (
     <div className="min-h-screen bg-background">
       <div className="border-b border-border bg-background sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-4">
+        <div className="max-w-4xl mx-auto px-3 sm:px-4 py-3 flex items-center gap-2 sm:gap-4">
           <Button
             variant="ghost"
             size="icon"
             onClick={() => navigate("/chat")}
+            className="h-9 w-9 sm:h-10 sm:w-10"
           >
-            <ArrowLeft className="h-5 w-5" />
+            <ArrowLeft className="h-4 w-4 sm:h-5 sm:w-5" />
           </Button>
-          <h1 className="text-xl font-semibold text-foreground">Личный кабинет</h1>
+          <h1 className="text-lg sm:text-xl font-semibold text-foreground">Личный кабинет</h1>
         </div>
       </div>
 
-      <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
+      <div className="max-w-4xl mx-auto px-3 sm:px-4 py-4 sm:py-8 space-y-4 sm:space-y-6">
         <Card className="border-border">
           <CardHeader>
             <div className="flex items-center gap-3">

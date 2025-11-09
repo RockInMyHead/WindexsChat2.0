@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Send, Mic, Paperclip } from "lucide-react";
+import { Send, Mic, Paperclip, Globe } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import ChatMessage from "@/components/ChatMessage";
 import ChatHeader from "@/components/ChatHeader";
@@ -152,24 +152,42 @@ const Chat = () => {
     console.log("Voice recording started");
   };
 
+  const handleCreateWebsite = () => {
+    setInput("Помоги мне создать веб-сайт. Какой сайт ты хочешь создать?");
+  };
+
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
         <ChatSidebar onNewChat={() => navigate("/")} />
         
         <div className="flex flex-col flex-1 h-screen">
-          <ChatHeader onNewChat={() => navigate("/")} />
+          <ChatHeader 
+            onNewChat={() => navigate("/")} 
+            onCreateWebsite={handleCreateWebsite}
+          />
       
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-4 py-8">
+          <div className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto px-2 sm:px-4 py-4 sm:py-8">
           {messages.length === 0 && (
-            <div className="text-center py-20 animate-fade-in">
-              <h2 className="text-3xl font-semibold text-foreground mb-4">
+            <div className="text-center py-12 sm:py-20 animate-fade-in">
+              <h2 className="text-2xl sm:text-3xl font-semibold text-foreground mb-4">
                 WindecsAI
               </h2>
-              <p className="text-muted-foreground">
+              <p className="text-sm sm:text-base text-muted-foreground mb-6">
                 Начните диалог, отправив сообщение
               </p>
+              <div className="flex flex-wrap gap-2 justify-center max-w-md mx-auto">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCreateWebsite}
+                  className="gap-2"
+                >
+                  <Globe className="h-4 w-4" />
+                  Создать сайт
+                </Button>
+              </div>
             </div>
           )}
           
@@ -197,10 +215,10 @@ const Chat = () => {
       </div>
 
           <div className="border-t border-border bg-background">
-            <div className="max-w-3xl mx-auto px-4 py-4">
-              <div className="flex items-center gap-2 mb-3">
+            <div className="max-w-3xl mx-auto px-2 sm:px-4 py-3 sm:py-4">
+              <div className="flex items-center gap-2 mb-3 overflow-x-auto">
                 <Select value={selectedModel} onValueChange={setSelectedModel}>
-                  <SelectTrigger className="w-[200px]">
+                  <SelectTrigger className="w-[140px] sm:w-[200px] text-xs sm:text-sm">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -208,32 +226,32 @@ const Chat = () => {
                     <SelectItem value="pro">WindecsAI Pro</SelectItem>
                   </SelectContent>
                 </Select>
-                <span className="text-xs text-muted-foreground">
+                <span className="text-[10px] sm:text-xs text-muted-foreground hidden sm:inline whitespace-nowrap">
                   {selectedModel === "pro" ? "Максимальная производительность" : "Быстрые ответы"}
                 </span>
               </div>
               
-              <form onSubmit={handleSubmit} className="flex gap-2">
-                <div className="flex gap-2">
+              <form onSubmit={handleSubmit} className="flex gap-1 sm:gap-2">
+                <div className="flex gap-1 sm:gap-2">
                   <Button
                     type="button"
                     variant="outline"
                     size="icon"
-                    className="h-[52px] w-[52px] shrink-0"
+                    className="h-10 w-10 sm:h-[52px] sm:w-[52px] shrink-0"
                     onClick={handleFileUpload}
                     disabled={isLoading}
                   >
-                    <Paperclip className="h-5 w-5" />
+                    <Paperclip className="h-4 w-4 sm:h-5 sm:w-5" />
                   </Button>
                   <Button
                     type="button"
                     variant="outline"
                     size="icon"
-                    className="h-[52px] w-[52px] shrink-0"
+                    className="h-10 w-10 sm:h-[52px] sm:w-[52px] shrink-0"
                     onClick={handleVoiceRecord}
                     disabled={isLoading}
                   >
-                    <Mic className="h-5 w-5" />
+                    <Mic className="h-4 w-4 sm:h-5 sm:w-5" />
                   </Button>
                 </div>
                 
@@ -243,17 +261,17 @@ const Chat = () => {
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="Отправьте сообщение..."
-                  className="min-h-[52px] max-h-[200px] resize-none"
+                  className="min-h-[40px] sm:min-h-[52px] max-h-[200px] resize-none text-sm sm:text-base"
                   disabled={isLoading}
                 />
                 
                 <Button
                   type="submit"
                   size="icon"
-                  className="h-[52px] w-[52px] shrink-0"
+                  className="h-10 w-10 sm:h-[52px] sm:w-[52px] shrink-0"
                   disabled={!input.trim() || isLoading}
                 >
-                  <Send className="h-5 w-5" />
+                  <Send className="h-4 w-4 sm:h-5 sm:w-5" />
                 </Button>
               </form>
               
