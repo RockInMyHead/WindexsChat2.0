@@ -519,14 +519,12 @@ export const sendChatMessage = async (
           console.log('Plan step - searchResults:', searchResults);
 
           // Для изоляции контекста используем только системное сообщение + текущее задание
-          const systemMessage = messages.find(msg => msg.role === 'system');
-          const stepMessages = systemMessage ? [
+          const systemMessage = messages.find(msg => msg.role === 'system') || {
+            role: 'system' as const,
+            content: 'Ты полезный AI-ассистент. Каждый чат является полностью независимым и изолированным. Не используй информацию или контекст из других разговоров. Отвечай только на основе предоставленных сообщений в текущем чате.'
+          };
+          const stepMessages = [
             systemMessage,
-            {
-              role: 'user' as const,
-              content: `${searchContext}Выполни этап плана "${step.step}": ${step.description}. Предыдущий контекст выполнения плана: ${fullResponse}`
-            }
-          ] : [
             {
               role: 'user' as const,
               content: `${searchContext}Выполни этап плана "${step.step}": ${step.description}. Предыдущий контекст выполнения плана: ${fullResponse}`
@@ -562,7 +560,10 @@ export const sendChatMessage = async (
             content: `${searchContext}${userMessage.content}`
           }
         ] : [
-          systemMessage || { role: 'system' as const, content: 'Ты полезный AI-ассистент.' },
+          systemMessage || {
+            role: 'system' as const,
+            content: 'Ты полезный AI-ассистент. Каждый чат является полностью независимым и изолированным. Не используй информацию или контекст из других разговоров. Отвечай только на основе предоставленных сообщений в текущем чате.'
+          },
           userMessage
         ];
 

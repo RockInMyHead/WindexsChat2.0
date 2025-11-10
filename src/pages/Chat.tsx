@@ -150,8 +150,14 @@ const Chat = () => {
     if (!messageText.trim() || isLoading || !currentSessionId) return;
 
     const userMessage: Message = { role: "user", content: messageText };
-    const allMessages = [...messages, userMessage];
-    setMessages(allMessages);
+    const systemMessage: Message = {
+      role: "system",
+      content: "Ты полезный AI-ассистент. Каждый чат является полностью независимым и изолированным. Не используй информацию или контекст из других разговоров. Отвечай только на основе предоставленных сообщений в текущем чате."
+    };
+    const allMessages = [systemMessage, ...messages, userMessage];
+
+    // Сохраняем только пользовательское сообщение в состоянии (без системного)
+    setMessages([...messages, userMessage]);
     setInput("");
     setIsLoading(true);
 
