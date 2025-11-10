@@ -13,29 +13,31 @@ interface ChatMessageProps {
 // Компонент для отображения блоков кода
 const CodeBlock = ({ code, language }: { code: string; language?: string }) => {
   return (
-    <div className="relative my-4 rounded-lg bg-gray-900 text-gray-100 overflow-hidden">
+    <div className="relative my-4 rounded-lg bg-gray-900 text-gray-100 w-full max-w-full overflow-hidden">
       {/* Заголовок с языком */}
       {language && (
-        <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
-          <span className="text-sm font-medium text-gray-300">{language}</span>
+        <div className="flex items-center justify-between px-3 py-2 bg-gray-800 border-b border-gray-700 sm:px-4">
+          <span className="text-xs sm:text-sm font-medium text-gray-300 truncate">{language}</span>
           <button
-            className="text-gray-400 hover:text-gray-200 transition-colors"
+            className="text-gray-400 hover:text-gray-200 transition-colors flex-shrink-0 ml-2"
             onClick={() => navigator.clipboard.writeText(code)}
             title="Копировать код"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
             </svg>
           </button>
         </div>
       )}
 
-      {/* Блок кода */}
-      <pre className="p-4 overflow-x-auto text-sm leading-relaxed">
-        <code className="font-mono text-gray-100 whitespace-pre">
-          {code}
-        </code>
-      </pre>
+      {/* Блок кода с адаптивными настройками */}
+      <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800">
+        <pre className="p-3 text-xs sm:text-sm leading-relaxed min-w-0 sm:p-4">
+          <code className="font-mono text-gray-100 block whitespace-pre-wrap break-words overflow-wrap-anywhere">
+            {code}
+          </code>
+        </pre>
+      </div>
     </div>
   );
 };
