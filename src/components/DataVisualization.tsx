@@ -141,7 +141,7 @@ const DataVisualization: React.FC<DataVisualizationProps> = ({ config }) => {
     <Card className="my-4 border-2 border-primary/20">
       <CardHeader className="pb-3">
         <CardTitle className="text-lg flex items-center gap-2">
-          📊 {title}
+          {title}
         </CardTitle>
       </CardHeader>
       <CardContent>
