@@ -87,7 +87,7 @@ const Chat = () => {
       sendMessage(initialMessage);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialChatMessage, location.state?.initialMessage, currentSessionId]);
+  }, [initialChatMessage, location.state?.initialMessage, messages.length, currentSessionId]);
 
   // Прокрутка при добавлении новых сообщений (только если пользователь не прокручивает)
   useEffect(() => {
@@ -317,10 +317,7 @@ const Chat = () => {
       setResponsePlan([]);
       setCurrentStep(-1);
       setIsPlanning(false);
-      initialMessageSentRef.current = false;
-
-      // Очищаем initialChatMessage, чтобы избежать автоматической отправки старого сообщения
-      setInitialChatMessage(null);
+      // НЕ очищаем initialMessageSentRef.current - это глобальный флаг за сессию
 
       // Создаем новую сессию
       const { sessionId: newSessionId } = await apiClient.createSession("Новый чат");
