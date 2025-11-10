@@ -1,4 +1,4 @@
-import { MessageSquare, User, Plus, Menu } from "lucide-react";
+import { MessageSquare, User, Plus, Trash2 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import {
   Sidebar,
@@ -13,38 +13,87 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
-import { useState } from "react";
-
-interface Chat {
-  id: string;
-  title: string;
-  timestamp: string;
-}
+import { useState, useEffect } from "react";
+import { apiClient, type ChatSession } from "@/lib/api";
 
 interface ChatSidebarProps {
-  onNewChat: () => void;
+  onSelectChat: (sessionId: number) => void;
+  currentSessionId?: number | null;
+  refreshTrigger?: number;
+  onChatDeleted?: () => void;
 }
 
-export function ChatSidebar({ onNewChat }: ChatSidebarProps) {
+export function ChatSidebar({ onSelectChat, currentSessionId, refreshTrigger, onChatDeleted }: ChatSidebarProps) {
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
-  const [chats] = useState<Chat[]>([
-    { id: "1", title: "Составление отчета о продажах", timestamp: "Сегодня" },
-    { id: "2", title: "Написание поста для соцсетей", timestamp: "Вчера" },
-    { id: "3", title: "Визуализация данных аналитики", timestamp: "2 дня назад" },
-  ]);
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadChatSessions = async () => {
+      try {
+        const sessions = await apiClient.getAllSessions();
+        setChatSessions(sessions);
+      } catch (error) {
+        console.error('Error loading chat sessions:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadChatSessions();
+  }, [refreshTrigger]);
+
+  const formatDate = (timestamp: number): string => {
+    const now = new Date();
+    const date = new Date(timestamp);
+    const diffTime = Math.abs(now.getTime() - date.getTime());
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays === 0) return 'Сегодня';
+    if (diffDays === 1) return 'Вчера';
+    if (diffDays < 7) return `${diffDays} дня назад`;
+    return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+  };
+
+  const handleChatClick = (sessionId: number) => {
+    onSelectChat(sessionId);
+  };
+
+  const handleDeleteChat = async (sessionId: number, sessionTitle: string) => {
+    if (currentSessionId === sessionId) {
+      alert('Нельзя удалить активный чат. Сначала переключитесь на другой чат.');
+      return;
+    }
+
+    if (chatSessions.length <= 1) {
+      alert('Нельзя удалить последний чат. Создайте новый чат перед удалением этого.');
+      return;
+    }
+
+    try {
+      await apiClient.deleteSession(sessionId);
+      const updatedSessions = await apiClient.getAllSessions();
+      setChatSessions(updatedSessions);
+      if (onChatDeleted) onChatDeleted();
+    } catch (error) {
+      console.error('Error deleting chat session:', error);
+      alert('Ошибка при удалении чата');
+    }
+  };
 
   return (
     <Sidebar className={collapsed ? "w-14" : "w-64"} collapsible="icon" side="left">
       <SidebarContent className="bg-background border-r border-border">
         <div className="p-4 flex items-center justify-between">
           {!collapsed && (
-            <h2 className="text-lg font-semibold text-foreground">WindecsAI</h2>
+            <h2 className="text-lg font-semibold text-foreground">WindexsAI</h2>
           )}
           <SidebarTrigger className="ml-auto" />
         </div>
 
-        <div className="px-2 mb-4">
+        {/* Кнопка "Новый чат" убрана по запросу пользователя */}
+        {/* <div className="px-2 mb-4">
           <Button
             onClick={onNewChat}
             className="w-full gap-2 bg-primary hover:bg-primary/90"
@@ -53,7 +102,7 @@ export function ChatSidebar({ onNewChat }: ChatSidebarProps) {
             <Plus className="h-4 w-4" />
             {!collapsed && <span>Новый чат</span>}
           </Button>
-        </div>
+        </div> */}
 
         <SidebarGroup>
           {!collapsed && (
@@ -63,27 +112,51 @@ export function ChatSidebar({ onNewChat }: ChatSidebarProps) {
           )}
           <SidebarGroupContent>
             <SidebarMenu>
-              {chats.map((chat) => (
-                <SidebarMenuItem key={chat.id}>
-                  <SidebarMenuButton asChild>
-                    <NavLink
-                      to={`/chat/${chat.id}`}
-                      className="hover:bg-muted/50 flex items-center gap-2"
-                      activeClassName="bg-muted text-primary"
-                    >
-                      <MessageSquare className="h-4 w-4 shrink-0" />
+              {loading ? (
+                <div className="px-2 py-4 text-center text-muted-foreground">
+                  {!collapsed && <span className="text-xs">Загрузка...</span>}
+                </div>
+              ) : chatSessions.length === 0 ? (
+                <div className="px-2 py-4 text-center text-muted-foreground">
+                  {!collapsed && <span className="text-xs">Нет чатов</span>}
+                </div>
+              ) : (
+                chatSessions.map((session) => (
+                  <SidebarMenuItem key={session.id}>
+                    <div className={`relative group ${!collapsed ? 'w-full' : ''}`}>
+                      <SidebarMenuButton
+                        onClick={() => handleChatClick(session.id!)}
+                        className={`hover:bg-muted/50 flex items-center gap-2 w-full ${
+                          currentSessionId === session.id ? 'bg-muted text-primary' : ''
+                        }`}
+                      >
+                        <MessageSquare className="h-4 w-4 shrink-0" />
+                        {!collapsed && (
+                          <div className="flex-1 overflow-hidden">
+                            <p className="text-sm truncate">{session.title}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatDate(session.updated_at)}
+                            </p>
+                          </div>
+                        )}
+                      </SidebarMenuButton>
+
                       {!collapsed && (
-                        <div className="flex-1 overflow-hidden">
-                          <p className="text-sm truncate">{chat.title}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {chat.timestamp}
-                          </p>
-                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteChat(session.id!, session.title);
+                          }}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all duration-200"
+                          title="Удалить чат"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
                       )}
-                    </NavLink>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+                    </div>
+                  </SidebarMenuItem>
+                ))
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

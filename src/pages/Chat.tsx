@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Send, Mic, Paperclip, Globe } from "lucide-react";
+import { Send, Mic, Paperclip } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import ChatMessage from "@/components/ChatMessage";
 import ChatHeader from "@/components/ChatHeader";
@@ -14,110 +14,229 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-}
+import { sendChatMessage, type PlanStep } from "@/lib/openai";
+import { apiClient, type Message } from "@/lib/api";
+import { FileProcessor } from "@/lib/fileProcessor";
+import { useAuth } from "@/contexts/AuthContext";
 
 const Chat = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { initialChatMessage, setInitialChatMessage } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [selectedModel, setSelectedModel] = useState("lite");
+  const [currentSessionId, setCurrentSessionId] = useState<number | null>(null);
+  const [isProcessingFile, setIsProcessingFile] = useState(false);
+  const [sidebarRefreshTrigger, setSidebarRefreshTrigger] = useState(0);
+  const [responsePlan, setResponsePlan] = useState<PlanStep[]>([]);
+  const [currentStep, setCurrentStep] = useState<number>(-1);
+  const [isPlanning, setIsPlanning] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const initialMessageSentRef = useRef(false);
+  const isUserScrollingRef = useRef(false);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Инициализация сессии и загрузка сообщений
   useEffect(() => {
-    const initialMessage = location.state?.initialMessage;
-    if (initialMessage && messages.length === 0) {
+    const initializeSession = async () => {
+      if (!currentSessionId) {
+        try {
+          // Создаем новую сессию чата
+          const { sessionId } = await apiClient.createSession("Новый чат");
+          setCurrentSessionId(sessionId);
+
+          // Загружаем сообщения сессии (если есть)
+          const savedMessages = await apiClient.getMessages(sessionId);
+          if (savedMessages.length > 0) {
+            setMessages(savedMessages);
+          } else {
+            // Если нет сохраненных сообщений, проверяем initialMessage из контекста или location.state
+            const initialMessage = initialChatMessage || location.state?.initialMessage;
+            if (initialMessage && !initialMessageSentRef.current) {
+              initialMessageSentRef.current = true;
+              // Очищаем initialChatMessage после использования
+              setInitialChatMessage(null);
+              // Небольшая задержка для обеспечения корректной инициализации
+              setTimeout(() => {
+                sendMessage(initialMessage);
+              }, 100);
+            }
+          }
+        } catch (error) {
+          console.error('Error initializing session:', error);
+        }
+      }
+    };
+
+    initializeSession();
+  }, [currentSessionId]);
+
+  // Также проверяем initialMessage при изменении initialChatMessage или location.state
+  useEffect(() => {
+    const initialMessage = initialChatMessage || location.state?.initialMessage;
+    if (initialMessage && messages.length === 0 && currentSessionId && !initialMessageSentRef.current) {
+      initialMessageSentRef.current = true;
+      // Очищаем initialChatMessage после использования
+      if (initialChatMessage) {
+        setInitialChatMessage(null);
+      }
       sendMessage(initialMessage);
     }
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialChatMessage, location.state?.initialMessage, currentSessionId]);
 
+  // Прокрутка при добавлении новых сообщений (только если пользователь не прокручивает)
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    scrollToBottom();
   }, [messages]);
 
+  // Умная прокрутка - только если пользователь не прокручивает вручную
+  const scrollToBottom = (force = false) => {
+    if (!messagesEndRef.current) return;
+
+    const container = messagesEndRef.current.closest('[data-radix-scroll-area-viewport]');
+    if (!container) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 100; // 100px от низа
+
+    // Прокручиваем только если пользователь у низа или принудительно
+    if (force || (isNearBottom && !isUserScrollingRef.current)) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  };
+
+  // Отслеживаем пользовательскую прокрутку
+  useEffect(() => {
+    const container = messagesEndRef.current?.closest('[data-radix-scroll-area-viewport]');
+    if (!container) return;
+
+    const handleScroll = () => {
+      isUserScrollingRef.current = true;
+
+      // Сбрасываем флаг пользовательской прокрутки через 2 секунды
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+      scrollTimeoutRef.current = setTimeout(() => {
+        isUserScrollingRef.current = false;
+      }, 2000);
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => {
+      container.removeEventListener('scroll', handleScroll);
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Очистка ресурсов при размонтировании
+  useEffect(() => {
+    return () => {
+      FileProcessor.cleanup();
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const sendMessage = async (messageText: string) => {
-    if (!messageText.trim() || isLoading) return;
+    if (!messageText.trim() || isLoading || !currentSessionId) return;
 
     const userMessage: Message = { role: "user", content: messageText };
-    setMessages((prev) => [...prev, userMessage]);
+    const allMessages = [...messages, userMessage];
+    setMessages(allMessages);
     setInput("");
     setIsLoading(true);
 
+    // Принудительная прокрутка при начале ответа
+    setTimeout(() => {
+      scrollToBottom(true);
+    }, 100);
+
+    // Сбрасываем состояние плана для нового сообщения
+    setResponsePlan([]);
+    setCurrentStep(-1);
+    setIsPlanning(false);
+
+    // Сохраняем сообщение пользователя в базу данных
+    await apiClient.saveMessage(currentSessionId, "user", messageText);
+
     try {
-      const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
-      const response = await fetch(CHAT_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
-        body: JSON.stringify({ messages: [...messages, userMessage] }),
-      });
-
-      if (!response.ok || !response.body) {
-        throw new Error("Failed to get response");
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
       let assistantContent = "";
       let hasStartedAssistantMessage = false;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      await sendChatMessage(
+        allMessages,
+        selectedModel,
+        (chunk: string) => {
+          assistantContent += chunk;
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split("\n");
-
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6);
-            if (data === "[DONE]") continue;
-
-            try {
-              const parsed = JSON.parse(data);
-              const content = parsed.choices?.[0]?.delta?.content;
-
-              if (content) {
-                assistantContent += content;
-                
-                if (!hasStartedAssistantMessage) {
-                  setMessages((prev) => [
-                    ...prev,
-                    { role: "assistant", content: assistantContent },
-                  ]);
-                  hasStartedAssistantMessage = true;
-                } else {
-                  setMessages((prev) => {
-                    const newMessages = [...prev];
-                    newMessages[newMessages.length - 1].content = assistantContent;
-                    return newMessages;
-                  });
-                }
-              }
-            } catch (e) {
-              // Ignore JSON parse errors
-            }
+          if (!hasStartedAssistantMessage) {
+            setMessages((prev) => [
+              ...prev,
+              { role: "assistant", content: assistantContent },
+            ]);
+            hasStartedAssistantMessage = true;
+          } else {
+            setMessages((prev) => {
+              const newMessages = [...prev];
+              newMessages[newMessages.length - 1].content = assistantContent;
+              return newMessages;
+            });
           }
+
+          // Умная прокрутка только если пользователь у низа
+          setTimeout(() => {
+            scrollToBottom();
+          }, 10);
+        },
+        // Колбэк для генерации плана
+        (plan: PlanStep[]) => {
+          setResponsePlan(plan);
+          setIsPlanning(true);
+        },
+        // Колбэк для начала выполнения этапа
+        (stepIndex: number, step: PlanStep) => {
+          setCurrentStep(stepIndex);
+          setIsPlanning(false);
+        }
+      );
+
+      // Сохраняем ответ ассистента в базу данных
+      if (assistantContent) {
+        await apiClient.saveMessage(currentSessionId, "assistant", assistantContent);
+
+        // Если это первый ответ ассистента, генерируем заголовок чата
+        if (messages.length === 1 && currentSessionId) { // messages.length === 1 означает, что до этого было только сообщение пользователя
+          await generateChatTitle(messageText, currentSessionId);
         }
       }
     } catch (error) {
       console.error("Error:", error);
+      const errorMessage = "Извините, произошла ошибка. Пожалуйста, попробуйте снова.";
+
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: "Извините, произошла ошибка. Пожалуйста, попробуйте снова.",
+          content: errorMessage,
         },
       ]);
+
+      // Сохраняем сообщение об ошибке в базу данных
+      await apiClient.saveMessage(currentSessionId, "assistant", errorMessage);
+
+      // Сбрасываем состояние плана при ошибке
+      setResponsePlan([]);
+      setCurrentStep(-1);
+      setIsPlanning(false);
     } finally {
       setIsLoading(false);
     }
@@ -139,11 +258,48 @@ const Chat = () => {
     fileInputRef.current?.click();
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      // Здесь будет логика загрузки файла
-      console.log("File selected:", file.name);
+    if (!file) return;
+
+    // Проверяем, поддерживается ли тип файла
+    if (!FileProcessor.isSupportedFileType(file)) {
+      alert(`Неподдерживаемый тип файла.\n${FileProcessor.getSupportedFileTypesDescription()}`);
+      return;
+    }
+
+    // Проверяем размер файла (макс 10MB)
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (file.size > maxSize) {
+      alert('Файл слишком большой. Максимальный размер: 10MB');
+      return;
+    }
+
+    setIsProcessingFile(true);
+
+    try {
+      // Обрабатываем файл
+      const processedFile = await FileProcessor.processFile(file);
+
+      if (processedFile.success && processedFile.text.trim()) {
+        // Создаем сообщение с содержимым файла
+        const fileMessage = `📄 **${processedFile.fileName}**\n\n${processedFile.text}`;
+
+        // Автоматически отправляем сообщение с содержимым файла
+        await sendMessage(`Проанализируй этот документ и дай краткое содержание:\n\n${fileMessage}`);
+      } else {
+        // Показываем ошибку
+        alert(processedFile.error || 'Не удалось обработать файл');
+      }
+    } catch (error) {
+      console.error('Error processing file:', error);
+      alert('Произошла ошибка при обработке файла');
+    } finally {
+      setIsProcessingFile(false);
+      // Сбрасываем input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
@@ -152,49 +308,136 @@ const Chat = () => {
     console.log("Voice recording started");
   };
 
-  const handleCreateWebsite = () => {
-    setInput("Помоги мне создать веб-сайт. Какой сайт ты хочешь создать?");
+  const handleSelectChat = async (sessionId: number) => {
+    if (isLoading || currentSessionId === sessionId) return; // Предотвращаем одновременные операции и перезагрузку того же чата
+
+    try {
+      // Очищаем состояние перед загрузкой нового чата
+      setResponsePlan([]);
+      setCurrentStep(-1);
+      setIsPlanning(false);
+      initialMessageSentRef.current = false;
+
+      setCurrentSessionId(sessionId);
+      // Загружаем сообщения выбранного чата
+      const chatMessages = await apiClient.getMessages(sessionId);
+      setMessages(chatMessages);
+    } catch (error) {
+      console.error('Error loading chat:', error);
+    }
+  };
+
+  const generateChatTitle = async (userMessage: string, sessionId: number) => {
+    try {
+      // Генерируем заголовок на основе первого сообщения пользователя
+      let title = userMessage.trim();
+
+      // Ограничиваем длину заголовка
+      if (title.length > 50) {
+        title = title.substring(0, 47) + "...";
+      }
+
+      // Если сообщение слишком короткое, используем общий заголовок
+      if (title.length < 5) {
+        title = "Новый чат";
+      }
+
+      // Обновляем заголовок в базе данных
+      await apiClient.updateSessionTitle(sessionId, title);
+
+      // Обновляем sidebar
+      setSidebarRefreshTrigger(prev => prev + 1);
+
+    } catch (error) {
+      console.error('Error generating chat title:', error);
+      // В случае ошибки оставляем заголовок по умолчанию
+    }
   };
 
   return (
     <SidebarProvider>
       <div className="flex min-h-screen w-full bg-background">
-        <ChatSidebar onNewChat={() => navigate("/")} />
-        
+        <ChatSidebar
+          onSelectChat={handleSelectChat}
+          currentSessionId={currentSessionId}
+          refreshTrigger={sidebarRefreshTrigger}
+          onChatDeleted={() => setSidebarRefreshTrigger(prev => prev + 1)}
+        />
+
         <div className="flex flex-col flex-1 h-screen">
-          <ChatHeader 
-            onNewChat={() => navigate("/")} 
-            onCreateWebsite={handleCreateWebsite}
-          />
+          <ChatHeader />
       
           <div className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-2 sm:px-4 py-4 sm:py-8">
           {messages.length === 0 && (
             <div className="text-center py-12 sm:py-20 animate-fade-in">
               <h2 className="text-2xl sm:text-3xl font-semibold text-foreground mb-4">
-                WindecsAI
+                WindexsAI
               </h2>
-              <p className="text-sm sm:text-base text-muted-foreground mb-6">
+              <p className="text-sm sm:text-base text-muted-foreground">
                 Начните диалог, отправив сообщение
               </p>
-              <div className="flex flex-wrap gap-2 justify-center max-w-md mx-auto">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleCreateWebsite}
-                  className="gap-2"
-                >
-                  <Globe className="h-4 w-4" />
-                  Создать сайт
-                </Button>
-              </div>
             </div>
           )}
           
           {messages.map((message, index) => (
             <ChatMessage key={index} message={message} />
           ))}
-          
+
+          {/* План выполнения ответа */}
+          {(responsePlan.length > 0 || isPlanning) && (
+            <div className="mb-6 p-4 bg-secondary/50 rounded-lg border border-secondary animate-fade-in">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center">
+                  <span className="text-xs font-bold text-primary-foreground">📋</span>
+                </div>
+                <h3 className="font-semibold text-foreground">
+                  {isPlanning ? "Создание плана ответа..." : "План выполнения"}
+                </h3>
+              </div>
+
+              {isPlanning ? (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary border-t-transparent" />
+                  <span className="text-sm">Анализирую ваш вопрос и составляю план...</span>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {responsePlan.map((step, index) => (
+                    <div
+                      key={index}
+                      className={`flex items-start gap-3 p-2 rounded ${
+                        index === currentStep
+                          ? 'bg-primary/10 border border-primary/20'
+                          : step.completed
+                            ? 'bg-green-50 border border-green-200'
+                            : 'bg-muted/30'
+                      }`}
+                    >
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-medium mt-0.5 ${
+                        index === currentStep
+                          ? 'bg-primary text-primary-foreground animate-pulse'
+                          : step.completed
+                            ? 'bg-green-500 text-white'
+                            : 'bg-muted text-muted-foreground'
+                      }`}>
+                        {step.completed ? '✓' : index === currentStep ? '⏳' : index + 1}
+                      </div>
+                      <div className="flex-1">
+                        <div className="font-medium text-sm text-foreground">
+                          {step.step}
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1">
+                          {step.description}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {isLoading && messages[messages.length - 1]?.role === "user" && (
             <div className="flex items-start gap-4 mb-6 animate-fade-in">
               <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-primary-foreground font-semibold">
@@ -222,8 +465,8 @@ const Chat = () => {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="lite">WindecsAI Lite</SelectItem>
-                    <SelectItem value="pro">WindecsAI Pro</SelectItem>
+                    <SelectItem value="lite">WindexsAI Lite</SelectItem>
+                    <SelectItem value="pro">WindexsAI Pro</SelectItem>
                   </SelectContent>
                 </Select>
                 <span className="text-[10px] sm:text-xs text-muted-foreground hidden sm:inline whitespace-nowrap">
@@ -232,28 +475,21 @@ const Chat = () => {
               </div>
               
               <form onSubmit={handleSubmit} className="flex gap-1 sm:gap-2">
-                <div className="flex gap-1 sm:gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="h-10 w-10 sm:h-[52px] sm:w-[52px] shrink-0"
-                    onClick={handleFileUpload}
-                    disabled={isLoading}
-                  >
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-10 w-10 sm:h-[52px] sm:w-[52px] shrink-0"
+                  onClick={handleFileUpload}
+                  disabled={isLoading || isProcessingFile}
+                  title={FileProcessor.getSupportedFileTypesDescription()}
+                >
+                  {isProcessingFile ? (
+                    <div className="animate-spin rounded-full h-4 w-4 sm:h-5 sm:w-5 border-2 border-primary border-t-transparent" />
+                  ) : (
                     <Paperclip className="h-4 w-4 sm:h-5 sm:w-5" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="h-10 w-10 sm:h-[52px] sm:w-[52px] shrink-0"
-                    onClick={handleVoiceRecord}
-                    disabled={isLoading}
-                  >
-                    <Mic className="h-4 w-4 sm:h-5 sm:w-5" />
-                  </Button>
-                </div>
+                  )}
+                </Button>
                 
                 <Textarea
                   ref={textareaRef}
@@ -266,12 +502,18 @@ const Chat = () => {
                 />
                 
                 <Button
-                  type="submit"
+                  type={input.trim() ? "submit" : "button"}
                   size="icon"
                   className="h-10 w-10 sm:h-[52px] sm:w-[52px] shrink-0"
-                  disabled={!input.trim() || isLoading}
+                  disabled={isLoading}
+                  onClick={input.trim() ? undefined : handleVoiceRecord}
+                  title={input.trim() ? "Отправить сообщение" : "Голосовой ввод"}
                 >
-                  <Send className="h-4 w-4 sm:h-5 sm:w-5" />
+                  {input.trim() ? (
+                    <Send className="h-4 w-4 sm:h-5 sm:w-5" />
+                  ) : (
+                    <Mic className="h-4 w-4 sm:h-5 sm:w-5" />
+                  )}
                 </Button>
               </form>
               
@@ -280,11 +522,11 @@ const Chat = () => {
                 type="file"
                 className="hidden"
                 onChange={handleFileChange}
-                accept="*/*"
+                accept=".pdf,.docx,.doc,.txt,.png,.jpg,.jpeg,.bmp,.tiff,.webp,application/pdf,text/plain,image/*"
               />
               
               <p className="text-xs text-muted-foreground text-center mt-2">
-                WindecsAI может допускать ошибки. Проверяйте важную информацию.
+                WindexsAI может допускать ошибки. Проверяйте важную информацию.
               </p>
             </div>
           </div>
