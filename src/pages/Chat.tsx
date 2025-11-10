@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Send, Mic, Paperclip } from "lucide-react";
+import { Send, Mic, Square, Paperclip } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import ChatMessage from "@/components/ChatMessage";
 import ChatHeader from "@/components/ChatHeader";
@@ -18,6 +18,68 @@ import { sendChatMessage, type PlanStep } from "@/lib/openai";
 import { apiClient, type Message } from "@/lib/api";
 import { FileProcessor } from "@/lib/fileProcessor";
 import { useAuth } from "@/contexts/AuthContext";
+
+// Типы для Speech Recognition API
+interface SpeechRecognitionEvent extends Event {
+  results: SpeechRecognitionResultList;
+  resultIndex: number;
+}
+
+interface SpeechRecognitionErrorEvent extends Event {
+  error: string;
+  message?: string;
+}
+
+interface SpeechRecognitionResultList {
+  readonly length: number;
+  item(index: number): SpeechRecognitionResult;
+  [index: number]: SpeechRecognitionResult;
+}
+
+interface SpeechRecognitionResult {
+  readonly length: number;
+  item(index: number): SpeechRecognitionAlternative;
+  [index: number]: SpeechRecognitionAlternative;
+  isFinal: boolean;
+}
+
+interface SpeechRecognitionAlternative {
+  transcript: string;
+  confidence: number;
+}
+
+interface SpeechRecognition extends EventTarget {
+  continuous: boolean;
+  grammars: SpeechGrammarList;
+  interimResults: boolean;
+  lang: string;
+  maxAlternatives: number;
+  serviceURI: string;
+  start(): void;
+  stop(): void;
+  abort(): void;
+  onaudiostart: ((this: SpeechRecognition, ev: Event) => any) | null;
+  onaudioend: ((this: SpeechRecognition, ev: Event) => any) | null;
+  onend: ((this: SpeechRecognition, ev: Event) => any) | null;
+  onerror: ((this: SpeechRecognition, ev: SpeechRecognitionErrorEvent) => any) | null;
+  onnomatch: ((this: SpeechRecognition, ev: SpeechRecognitionEvent) => any) | null;
+  onresult: ((this: SpeechRecognition, ev: SpeechRecognitionEvent) => any) | null;
+  onsoundstart: ((this: SpeechRecognition, ev: Event) => any) | null;
+  onsoundend: ((this: SpeechRecognition, ev: Event) => any) | null;
+  onspeechstart: ((this: SpeechRecognition, ev: Event) => any) | null;
+  onspeechend: ((this: SpeechRecognition, ev: Event) => any) | null;
+  onstart: ((this: SpeechRecognition, ev: Event) => any) | null;
+}
+
+declare var SpeechRecognition: {
+  prototype: SpeechRecognition;
+  new(): SpeechRecognition;
+};
+
+declare var webkitSpeechRecognition: {
+  prototype: SpeechRecognition;
+  new(): SpeechRecognition;
+};
 
 const Chat = () => {
   const location = useLocation();
@@ -309,9 +371,73 @@ const Chat = () => {
     }
   };
 
+  const [isRecording, setIsRecording] = useState(false);
+  const [recognition, setRecognition] = useState<SpeechRecognition | null>(null);
+
+  useEffect(() => {
+    // Инициализация Speech Recognition API
+    if (typeof window !== 'undefined' && (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const recognitionInstance = new SpeechRecognition();
+
+      recognitionInstance.continuous = false;
+      recognitionInstance.interimResults = false;
+      recognitionInstance.lang = 'ru-RU'; // Основной язык - русский
+
+      recognitionInstance.onstart = () => {
+        setIsRecording(true);
+        console.log('Voice recording started');
+      };
+
+      recognitionInstance.onend = () => {
+        setIsRecording(false);
+        console.log('Voice recording ended');
+      };
+
+      recognitionInstance.onresult = (event: SpeechRecognitionEvent) => {
+        const transcript = event.results[0][0].transcript;
+        console.log('Voice transcript:', transcript);
+
+        if (transcript.trim()) {
+          // Отправляем распознанный текст как сообщение
+          sendMessage(transcript.trim());
+        }
+      };
+
+      recognitionInstance.onerror = (event: SpeechRecognitionErrorEvent) => {
+        console.error('Speech recognition error:', event.error);
+        setIsRecording(false);
+
+        // Показываем ошибку пользователю
+        if (event.error === 'not-allowed') {
+          alert('Для голосового ввода необходимо разрешить доступ к микрофону');
+        } else if (event.error === 'no-speech') {
+          alert('Речь не обнаружена. Попробуйте еще раз.');
+        } else {
+          alert('Ошибка распознавания речи: ' + event.error);
+        }
+      };
+
+      setRecognition(recognitionInstance);
+    }
+  }, []);
+
   const handleVoiceRecord = () => {
-    // Здесь будет логика записи аудио
-    console.log("Voice recording started");
+    if (!recognition) {
+      alert('Голосовой ввод не поддерживается в этом браузере');
+      return;
+    }
+
+    if (isRecording) {
+      recognition.stop();
+    } else {
+      try {
+        recognition.start();
+      } catch (error) {
+        console.error('Error starting voice recognition:', error);
+        alert('Не удалось начать запись голоса');
+      }
+    }
   };
 
   const handleNewChat = async () => {
@@ -536,11 +662,34 @@ const Chat = () => {
                   size="icon"
                   className="h-10 w-10 sm:h-[52px] sm:w-[52px] shrink-0"
                   disabled={isLoading}
-                  onClick={input.trim() ? undefined : handleVoiceRecord}
-                  title={input.trim() ? "Отправить сообщение" : "Голосовой ввод"}
+                  onMouseDown={input.trim() ? undefined : (e) => {
+                    e.preventDefault();
+                    handleVoiceRecord();
+                  }}
+                  onMouseUp={input.trim() ? undefined : (e) => {
+                    e.preventDefault();
+                    if (isRecording && recognition) {
+                      recognition.stop();
+                    }
+                  }}
+                  onTouchStart={input.trim() ? undefined : (e) => {
+                    e.preventDefault();
+                    handleVoiceRecord();
+                  }}
+                  onTouchEnd={input.trim() ? undefined : (e) => {
+                    e.preventDefault();
+                    if (isRecording && recognition) {
+                      recognition.stop();
+                    }
+                  }}
+                  title={input.trim() ? "Отправить сообщение" :
+                         isRecording ? "Отпустите для завершения записи" : "Удерживайте для голосового ввода"}
+                  className={`${input.trim() ? "" : isRecording ? "bg-red-500 hover:bg-red-600 animate-pulse" : ""}`}
                 >
                   {input.trim() ? (
                     <Send className="h-4 w-4 sm:h-5 sm:w-5" />
+                  ) : isRecording ? (
+                    <Square className="h-4 w-4 sm:h-5 sm:w-5" />
                   ) : (
                     <Mic className="h-4 w-4 sm:h-5 sm:w-5" />
                   )}
