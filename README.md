@@ -1,54 +1,55 @@
-# Welcome to your Lovable project
+# 🚀 WindexsChat 2.0 - AI-ассистент с расширенными возможностями
 
-## Project info
+**WindexsChat 2.0** - это полнофункциональный AI-ассистент с поддержкой чатов, обработки файлов, визуализации данных и многого другого.
 
-**URL**: https://lovable.dev/projects/6ab196ea-1cd5-4cee-9b1c-ac315c00cd70
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-blue)](https://github.com/RockInMyHead/WindexsChat2.0)
+[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-## How can I edit this code?
+## 🚀 Быстрый старт
 
-There are several ways of editing your application.
+### Установка и запуск
 
-**Use Lovable**
+**Требования:**
+- Node.js 18+ и npm
+- Git
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/6ab196ea-1cd5-4cee-9b1c-ac315c00cd70) and start prompting.
+```bash
+# 1. Клонируйте репозиторий
+git clone https://github.com/RockInMyHead/WindexsChat2.0.git
+cd WindexsChat2.0
 
-Changes made via Lovable will be committed automatically to this repo.
+# 2. Установите зависимости
+npm install
 
-**Use your preferred IDE**
+# 3. Инициализируйте базу данных
+npm run init-db
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+# 4. Запустите приложение
+npm run dev:full
 ```
 
-**Edit a file directly in GitHub**
+Приложение будет доступно по адресу:
+- **Frontend:** http://localhost:8081
+- **API сервер:** http://localhost:3003
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+### Настройка OpenAI API
 
-**Use GitHub Codespaces**
+1. Получите API ключ от [OpenAI](https://platform.openai.com/api-keys)
+2. Создайте файл `.env` в корне проекта:
+```bash
+VITE_OPENAI_API_KEY=your_api_key_here
+```
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+### Доступные скрипты
+
+```bash
+npm run dev          # Запуск frontend (Vite)
+npm run server       # Запуск API сервера (Express)
+npm run dev:full     # Запуск всего приложения
+npm run init-db      # Инициализация базы данных
+npm run build        # Сборка для production
+npm run preview      # Просмотр сборки
+```
 
 ## What technologies are used for this project?
 
@@ -239,14 +240,76 @@ npm run dev       # Frontend on port 8083
 
 The database file (`windexs_chat.db`) is created automatically and stores all your chat history locally.
 
-## How can I deploy this project?
+## ✨ Ключевые возможности
 
-Simply open [Lovable](https://lovable.dev/projects/6ab196ea-1cd5-4cee-9b1c-ac315c00cd70) and click on Share -> Publish.
+### 🤖 AI интеграция
+- Поддержка GPT-4 и GPT-3.5-turbo
+- Интеллектуальное планирование ответов
+- Потоковая генерация текста
+- Анализ и обработка документов
 
-## Can I connect a custom domain to my Lovable project?
+### 📊 Визуализация данных
+- Интерактивные графики (линейные, столбчатые, круговые)
+- Реальные данные из интернета
+- Автоматическая генерация JSON конфигураций
+- Адаптивный дизайн
 
-Yes, you can!
+### 📁 Обработка файлов
+- **PDF документы** - извлечение текста
+- **Word документы** (DOCX) - обработка контента
+- **Текстовые файлы** - прямое чтение
+- **Изображения** - OCR на русском и английском
+- **Безопасность** - локальная обработка, без загрузки на сервер
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+### 💬 Управление чатами
+- Сохранение истории разговоров
+- Автоматическая генерация заголовков
+- Группировка по датам
+- Удаление чатов с защитой
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+### 🎨 Современный интерфейс
+- Темная тема с аккуратными стилями
+- Адаптивный дизайн для всех устройств
+- Красивые блоки кода с подсветкой
+- Плавные анимации и переходы
+
+## 🚀 Последние обновления (v2.0)
+
+- ✅ **Исправлена ошибка 404** для PDF worker
+- ✅ **Добавлены блоки кода** в Telegram-стиле
+- ✅ **Реальные данные** для визуализаций (не синтетика)
+- ✅ **Улучшенная система поиска** в интернете
+- ✅ **Оптимизированные скрипты сборки**
+- ✅ **Автоматизация** копирования зависимостей
+
+## 🛠 Технологии
+
+- **Frontend:** React 18 + TypeScript + Vite
+- **Backend:** Node.js + Express.js
+- **База данных:** SQLite + better-sqlite3
+- **UI:** Tailwind CSS + Shadcn/ui + Radix UI
+- **AI:** OpenAI API (GPT-4, GPT-3.5-turbo)
+- **Обработка файлов:** PDF.js, Tesseract.js, Mammoth.js
+- **Визуализация:** Recharts
+
+## 📄 Лицензия
+
+Этот проект распространяется под лицензией MIT. Подробности в файле [LICENSE](LICENSE).
+
+## 🤝 Вклад в проект
+
+1. Форкните репозиторий
+2. Создайте ветку для вашей фичи (`git checkout -b feature/AmazingFeature`)
+3. Зафиксируйте изменения (`git commit -m 'Add some AmazingFeature'`)
+4. Запушьте в ветку (`git push origin feature/AmazingFeature`)
+5. Откройте Pull Request
+
+## 📞 Поддержка
+
+Если у вас возникли вопросы или проблемы:
+- Создайте [Issue](https://github.com/RockInMyHead/WindexsChat2.0/issues) на GitHub
+- Проверьте [документацию по API](API_SETUP.md)
+
+---
+
+**Разработано с ❤️ для создания лучшего AI-ассистента**
