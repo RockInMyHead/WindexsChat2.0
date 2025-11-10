@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState, useRef } from "react";
 import DataVisualization, { parseVisualizationConfig, VisualizationConfig } from "./DataVisualization";
 
 interface Message {
@@ -103,6 +103,84 @@ const TextWithCodeBlocks = ({ text }: { text: string }) => {
 
 const ChatMessage = ({ message }: ChatMessageProps) => {
   const isUser = message.role === "user";
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Функция для генерации и воспроизведения TTS
+  const handleTTS = async () => {
+    if (isPlaying) {
+      // Останавливаем воспроизведение
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+      setIsPlaying(false);
+      return;
+    }
+
+    setIsLoading(true);
+
+    try {
+      // Получаем текст для озвучки (убираем блоки кода из текста)
+      const textToSpeak = message.content.replace(/```[\s\S]*?```/g, '').trim();
+
+      if (!textToSpeak) {
+        alert('Нет текста для озвучки');
+        setIsLoading(false);
+        return;
+      }
+
+      // Отправляем запрос к OpenAI TTS API
+      const response = await fetch('https://api.openai.com/v1/audio/speech', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'tts-1',
+          input: textToSpeak,
+          voice: 'alloy', // Можно выбрать: alloy, echo, fable, onyx, nova, shimmer
+          response_format: 'mp3',
+          speed: 1.0
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`OpenAI API error: ${response.status}`);
+      }
+
+      // Получаем аудио данные
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+
+      // Создаем аудио элемент и воспроизводим
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+
+      audio.onended = () => {
+        setIsPlaying(false);
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      audio.onerror = () => {
+        setIsPlaying(false);
+        setIsLoading(false);
+        alert('Ошибка воспроизведения аудио');
+        URL.revokeObjectURL(audioUrl);
+      };
+
+      await audio.play();
+      setIsPlaying(true);
+
+    } catch (error) {
+      console.error('TTS error:', error);
+      alert('Ошибка генерации речи. Проверьте API ключ и подключение.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Парсим конфигурацию визуализации из текста сообщения
   const visualizationConfig = useMemo(() => {
@@ -142,8 +220,35 @@ const ChatMessage = ({ message }: ChatMessageProps) => {
       isUser ? "justify-end" : "justify-start"
     }`}>
       {!isUser && (
-        <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-semibold shrink-0">
-          AI
+        <div className="flex flex-col items-center gap-2 shrink-0">
+          <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-semibold">
+            AI
+          </div>
+          {/* Кнопка озвучки */}
+          <button
+            onClick={handleTTS}
+            disabled={isLoading}
+            className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors ${
+              isPlaying
+                ? 'bg-red-500 text-white hover:bg-red-600'
+                : isLoading
+                ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                : 'bg-gray-600 text-gray-200 hover:bg-gray-500'
+            }`}
+            title={isPlaying ? 'Остановить озвучку' : 'Озвучить сообщение'}
+          >
+            {isLoading ? (
+              <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin"></div>
+            ) : isPlaying ? (
+              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+              </svg>
+            ) : (
+              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+              </svg>
+            )}
+          </button>
         </div>
       )}
       <div className={`flex-1 pt-1 ${isUser ? "max-w-[70%]" : "max-w-[80%]"}`}>
