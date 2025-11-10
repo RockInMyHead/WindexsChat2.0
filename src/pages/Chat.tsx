@@ -308,6 +308,33 @@ const Chat = () => {
     console.log("Voice recording started");
   };
 
+  const handleNewChat = async () => {
+    if (isLoading) return; // Предотвращаем одновременные операции
+
+    try {
+      // Очищаем все состояние перед созданием нового чата
+      setMessages([]);
+      setResponsePlan([]);
+      setCurrentStep(-1);
+      setIsPlanning(false);
+      initialMessageSentRef.current = false;
+
+      // Очищаем initialChatMessage, чтобы избежать автоматической отправки старого сообщения
+      setInitialChatMessage(null);
+
+      // Создаем новую сессию
+      const { sessionId: newSessionId } = await apiClient.createSession("Новый чат");
+      setCurrentSessionId(newSessionId);
+
+      // Обновляем sidebar для отображения новой сессии
+      setSidebarRefreshTrigger(prev => prev + 1);
+      // Очищаем input поле
+      setInput("");
+    } catch (error) {
+      console.error('Error creating new chat:', error);
+    }
+  };
+
   const handleSelectChat = async (sessionId: number) => {
     if (isLoading || currentSessionId === sessionId) return; // Предотвращаем одновременные операции и перезагрузку того же чата
 
@@ -365,7 +392,7 @@ const Chat = () => {
         />
 
         <div className="flex flex-col flex-1 h-screen">
-          <ChatHeader />
+          <ChatHeader onNewChat={handleNewChat} />
       
           <div className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-2 sm:px-4 py-4 sm:py-8">
