@@ -105,10 +105,13 @@ const Chat = () => {
   // Инициализация сессии и загрузка сообщений
   useEffect(() => {
     const initializeSession = async () => {
+      console.log('initializeSession called, currentSessionId:', currentSessionId);
       if (!currentSessionId) {
         try {
+          console.log('Creating new session...');
           // Создаем новую сессию чата
           const { sessionId } = await apiClient.createSession("Новый чат");
+          console.log('Session created with ID:', sessionId);
           setCurrentSessionId(sessionId);
 
           // Загружаем сообщения сессии (если есть)
@@ -209,7 +212,11 @@ const Chat = () => {
   }, []);
 
   const sendMessage = async (messageText: string) => {
-    if (!messageText.trim() || isLoading || !currentSessionId) return;
+    console.log('sendMessage called with:', messageText, 'currentSessionId:', currentSessionId);
+    if (!messageText.trim() || isLoading || !currentSessionId) {
+      console.log('sendMessage blocked:', { messageText: !!messageText.trim(), isLoading, currentSessionId });
+      return;
+    }
 
     const userMessage: Message = { role: "user", content: messageText };
     const systemMessage: Message = {
@@ -234,12 +241,15 @@ const Chat = () => {
     setIsPlanning(false);
 
     // Сохраняем сообщение пользователя в базу данных
+    console.log('Saving user message to database...');
     await apiClient.saveMessage(currentSessionId, "user", messageText);
+    console.log('Message saved, calling sendChatMessage...');
 
     try {
       let assistantContent = "";
       let hasStartedAssistantMessage = false;
 
+      console.log('About to call sendChatMessage with messages:', allMessages.length);
       await sendChatMessage(
         allMessages,
         selectedModel,
@@ -287,7 +297,8 @@ const Chat = () => {
         }
       }
     } catch (error) {
-      console.error("Error:", error);
+      console.error("Error in sendMessage:", error);
+      console.log("Error details:", error.message, error.stack);
       const errorMessage = "Извините, произошла ошибка. Пожалуйста, попробуйте снова.";
 
       setMessages((prev) => [
@@ -306,6 +317,7 @@ const Chat = () => {
       setCurrentStep(-1);
       setIsPlanning(false);
     } finally {
+      console.log("sendMessage finished, setting isLoading to false");
       setIsLoading(false);
     }
   };

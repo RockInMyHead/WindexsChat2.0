@@ -1,13 +1,14 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { DatabaseService } from './src/lib/database.js';
 
 const app = express();
-const PORT = 3003;
+const PORT = 1062;
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:8080', 'http://localhost:8081', 'http://localhost:8082', 'http://localhost:8083', 'http://localhost:3000', 'http://127.0.0.1:8080', 'http://127.0.0.1:8081', 'http://127.0.0.1:8082', 'http://127.0.0.1:8083', 'http://127.0.0.1:3000'],
+  origin: ['http://localhost:8080', 'http://localhost:8081', 'http://localhost:8082', 'http://localhost:8083', 'http://localhost:3000', 'http://127.0.0.1:8080', 'http://127.0.0.1:8081', 'http://127.0.0.1:8082', 'http://127.0.0.1:8083', 'http://127.0.0.1:3000', 'https://ai.windexs.ru', 'https://www.ai.windexs.ru'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -532,6 +533,78 @@ app.get('/api/web-search', async (req, res) => {
   }
 });
 
+// OpenAI Chat API proxy (обход CORS ограничений)
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { messages, model = 'gpt-3.5-turbo', stream = false } = req.body;
+
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ error: 'Messages array is required' });
+    }
+
+    // Получаем API ключ из переменных окружения сервера
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: 'OpenAI API key not configured on server' });
+    }
+
+    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: model === 'pro' ? 'gpt-4' : 'gpt-3.5-turbo',
+        messages,
+        stream,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!openaiResponse.ok) {
+      const errorText = await openaiResponse.text();
+      console.error('OpenAI API error:', openaiResponse.status, errorText);
+      return res.status(openaiResponse.status).json({
+        error: 'OpenAI API error',
+        details: errorText
+      });
+    }
+
+    if (stream) {
+      // Для потоковых ответов передаем поток напрямую
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      const reader = openaiResponse.body.getReader();
+      const decoder = new TextDecoder();
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value);
+          res.write(chunk);
+        }
+      } finally {
+        res.end();
+      }
+    } else {
+      // Для обычных ответов возвращаем JSON
+      const data = await openaiResponse.json();
+      res.json(data);
+    }
+
+  } catch (error) {
+    console.error('Chat API proxy error:', error);
+    res.status(500).json({
+      error: 'Failed to process chat request',
+      details: error.message
+    });
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -539,7 +612,7 @@ app.get('/api/health', (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 API Server running on http://localhost:${PORT}`);
+  console.log(`🚀 API Server running on https://ai.windexs.ru (port ${PORT})`);
 });
 
 // Graceful shutdown

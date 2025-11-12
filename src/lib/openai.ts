@@ -1,13 +1,10 @@
-import OpenAI from 'openai';
-
-const openai = new OpenAI({
-  apiKey: import.meta.env.VITE_OPENAI_API_KEY || '',
-  dangerouslyAllowBrowser: true, // Note: This is for client-side usage, in production you'd want a backend proxy
-});
+import { API_BASE_URL } from './api';
 
 // Функция для проверки доступности API
+// При использовании серверного прокси всегда возвращаем true,
+// поскольку сервер сам проверит наличие API ключа
 const isApiAvailable = () => {
-  return !!import.meta.env.VITE_OPENAI_API_KEY;
+  return true;
 };
 
 // Функция для поиска в интернете через backend API (обход CORS)
@@ -442,11 +439,15 @@ export const sendChatMessage = async (
   onPlanGenerated?: (plan: PlanStep[]) => void,
   onStepStart?: (stepIndex: number, step: PlanStep) => void
 ): Promise<string> => {
+  console.log('sendChatMessage called with:', { messagesCount: messages.length, model, hasOnChunk: !!onChunk });
   try {
     // Проверяем доступность API
+    console.log('Checking API availability...');
     if (!isApiAvailable()) {
+      console.log('API not available');
       return "Извините, сервис AI временно недоступен. Пожалуйста, проверьте настройки API ключа.";
     }
+    console.log('API is available');
     const userMessage = messages[messages.length - 1];
     const isFirstResponse = messages.filter(m => m.role === 'assistant').length === 0;
 
@@ -567,44 +568,124 @@ export const sendChatMessage = async (
           userMessage
         ];
 
-        const response = await openai.chat.completions.create({
-          model: model === "pro" ? "gpt-4" : "gpt-3.5-turbo",
-          messages: enhancedMessages.map(msg => ({
-            role: msg.role,
-            content: msg.content,
-          })),
-          stream: true,
+        console.log('Making fetch request to:', `${API_BASE_URL}/chat`);
+        console.log('Request payload:', {
+          messagesCount: enhancedMessages.length,
+          model,
+          stream: true
         });
 
-        for await (const chunk of response) {
-          const content = chunk.choices[0]?.delta?.content;
-          if (content) {
-            fullResponse += content;
-            if (onChunk) {
-              onChunk(content);
+        const response = await fetch(`${API_BASE_URL}/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messages: enhancedMessages.map(msg => ({
+              role: msg.role,
+              content: msg.content,
+            })),
+            model,
+            stream: true,
+          }),
+        });
+
+        console.log('Fetch response status:', response.status, response.statusText);
+
+        if (!response.ok) {
+          throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const data = line.slice(6);
+                if (data === '[DONE]') continue;
+
+                try {
+                  const parsed = JSON.parse(data);
+                  const content = parsed.choices[0]?.delta?.content;
+                  if (content) {
+                    fullResponse += content;
+                    if (onChunk) {
+                      onChunk(content);
+                    }
+                  }
+                } catch (e) {
+                  // Игнорируем невалидный JSON
+                }
+              }
             }
           }
+        } finally {
+          reader.releaseLock();
         }
+
       }
     } else {
       // Обычный ответ без плана (для последующих сообщений)
-      const response = await openai.chat.completions.create({
-        model: model === "pro" ? "gpt-4" : "gpt-3.5-turbo",
-        messages: messages.map(msg => ({
-          role: msg.role,
-          content: msg.content,
-        })),
-        stream: true,
+      const response = await fetch(`${API_BASE_URL}/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: messages.map(msg => ({
+            role: msg.role,
+            content: msg.content,
+          })),
+          model,
+          stream: true,
+        }),
       });
 
-      for await (const chunk of response) {
-        const content = chunk.choices[0]?.delta?.content;
-        if (content) {
-          fullResponse += content;
-          if (onChunk) {
-            onChunk(content);
+      if (!response.ok) {
+        throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n');
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6);
+              if (data === '[DONE]') continue;
+
+              try {
+                const parsed = JSON.parse(data);
+                const content = parsed.choices[0]?.delta?.content;
+                if (content) {
+                  fullResponse += content;
+                  if (onChunk) {
+                    onChunk(content);
+                  }
+                }
+              } catch (e) {
+                // Игнорируем невалидный JSON
+              }
+            }
           }
         }
+      } finally {
+        reader.releaseLock();
       }
     }
 
@@ -669,16 +750,28 @@ const generateResponsePlan = async (userQuestion: string, model: string): Promis
 План должен быть практичным, реалистичным и помогать дать полный, профессиональный ответ.
 `;
 
-  const response = await openai.chat.completions.create({
-    model: model === "pro" ? "gpt-4" : "gpt-3.5-turbo",
-    messages: [
-      { role: 'system', content: 'Ты - помощник, который создает планы ответов. Всегда отвечай только в формате JSON.' },
-      { role: 'user', content: planPrompt }
-    ],
-    temperature: 0.7,
+  const response = await fetch(`${API_BASE_URL}/chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messages: [
+        { role: 'system', content: 'Ты - помощник, который создает планы ответов. Всегда отвечай только в формате JSON.' },
+        { role: 'user', content: planPrompt }
+      ],
+      model,
+      stream: false,
+    }),
   });
 
-  const planText = response.choices[0]?.message?.content || '[]';
+  if (!response.ok) {
+    throw new Error(`Plan generation API error: ${response.status} ${response.statusText}`);
+  }
+
+  const responseData = await response.json();
+
+  const planText = responseData.choices[0]?.message?.content || '[]';
 
   try {
     // Очищаем текст от возможных обратных кавычек и лишних символов
@@ -848,16 +941,27 @@ ${searchContext}
   "yAxisKey": "value"
 }`;
 
-    const visualizationResponse = await openai.chat.completions.create({
-      model: model === "pro" ? "gpt-4" : "gpt-3.5-turbo",
-      messages: [
-        ...messages.slice(0, -1),
-        { role: 'user', content: visualizationPrompt }
-      ],
-      temperature: 0.3, // Снижаем temperature для более точных данных
+    const visualizationResponse = await fetch(`${API_BASE_URL}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messages: [
+          ...messages.slice(0, -1),
+          { role: 'user', content: visualizationPrompt }
+        ],
+        model,
+        stream: false,
+      }),
     });
 
-    let visualizationJson = visualizationResponse.choices[0]?.message?.content || '{}';
+    if (!visualizationResponse.ok) {
+      throw new Error(`Visualization API error: ${visualizationResponse.status} ${visualizationResponse.statusText}`);
+    }
+
+    const visualizationData = await visualizationResponse.json();
+    let visualizationJson = visualizationData.choices[0]?.message?.content || '{}';
 
     // Очищаем JSON от лишних символов
     visualizationJson = visualizationJson.trim();
@@ -905,22 +1009,56 @@ ${searchContext}
       };
     });
 
-    const response = await openai.chat.completions.create({
-      model: model === "pro" ? "gpt-4" : "gpt-3.5-turbo",
-      messages: stepMessages,
-      stream: true,
+    const response = await fetch(`${API_BASE_URL}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messages: stepMessages,
+        model,
+        stream: true,
+      }),
     });
 
-    let stepResponse = '';
+    if (!response.ok) {
+      throw new Error(`Step execution API error: ${response.status} ${response.statusText}`);
+    }
 
-    for await (const chunk of response) {
-      const content = chunk.choices[0]?.delta?.content;
-      if (content) {
-        stepResponse += content;
-        if (onChunk) {
-          onChunk(content);
+    let stepResponse = '';
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') continue;
+
+            try {
+              const parsed = JSON.parse(data);
+              const content = parsed.choices[0]?.delta?.content;
+              if (content) {
+                stepResponse += content;
+                if (onChunk) {
+                  onChunk(content);
+                }
+              }
+            } catch (e) {
+              // Игнорируем невалидный JSON
+            }
+          }
         }
       }
+    } finally {
+      reader.releaseLock();
     }
 
     return stepResponse;
