@@ -1,4 +1,4 @@
-export const API_BASE_URL = 'https://ai.windexs.ru/api';
+const API_BASE_URL = 'http://localhost:3003/api';
 
 export interface Message {
   id?: number;

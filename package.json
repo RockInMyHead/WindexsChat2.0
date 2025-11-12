@@ -58,6 +58,7 @@
     "dotenv": "^17.2.3",
     "embla-carousel-react": "^8.6.0",
     "express": "^5.1.0",
+    "https-proxy-agent": "^7.0.6",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.462.0",
     "mammoth": "^1.11.0",
