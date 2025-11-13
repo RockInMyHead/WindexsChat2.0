@@ -288,137 +288,40 @@ const requiresWebSearch = (query: string): boolean => {
 
   // ВИЗУАЛИЗАЦИИ: всегда требуют поиска актуальных данных
   if (lowerQuery.includes('визуализ') || lowerQuery.includes('покажи график') ||
-      lowerQuery.includes('данные для график') || lowerQuery.includes('график') ||
-      lowerQuery.includes('диаграмм') || lowerQuery.includes('создать визуализацию')) {
+      lowerQuery.includes('данные для график') || lowerQuery.includes('создать визуализацию')) {
     return true;
   }
 
-  // Актуальные данные и время
-  if (lowerQuery.includes('сейчас') || lowerQuery.includes('сегодня') || lowerQuery.includes('вчера') ||
-      lowerQuery.includes('последн') || lowerQuery.includes('актуальн') || lowerQuery.includes('текущ')) {
+  // Финансовые данные с конкретными запросами
+  if ((lowerQuery.includes('курс') && (lowerQuery.includes('биткоин') || lowerQuery.includes('доллар') || lowerQuery.includes('евро'))) ||
+      (lowerQuery.includes('цена') && (lowerQuery.includes('крипто') || lowerQuery.includes('биткоин'))) ||
+      (lowerQuery.includes('стоимост') && (lowerQuery.includes('недвижимост') || lowerQuery.includes('квартир'))) ||
+      /\b(btc|eth|bnb|ada|sol|dot|avax|matic|link|uni|usdc|usdt)\b/i.test(lowerQuery)) {
     return true;
   }
 
-  // Финансовые данные
-  if (lowerQuery.includes('курс') || lowerQuery.includes('цена') || lowerQuery.includes('стоимост') ||
-      lowerQuery.includes('биткоин') || lowerQuery.includes('крипто') || lowerQuery.includes('валют') ||
-      lowerQuery.includes('бирж') || lowerQuery.includes('инфляц') ||
-      /\b(mbc|btc|eth|bnb|ada|sol|dot|avax|matic|link|uni|usdc|usdt)\b/i.test(lowerQuery)) {
+  // Статистика и аналитика с конкретными данными
+  if ((lowerQuery.includes('рейтинг') && lowerQuery.includes('фильм')) ||
+      (lowerQuery.includes('топ') && (lowerQuery.includes('игра') || lowerQuery.includes('фильм'))) ||
+      (lowerQuery.includes('статистик') && (lowerQuery.includes('продаж') || lowerQuery.includes('рынок'))) ||
+      (lowerQuery.includes('отчет') && lowerQuery.includes('финансов'))) {
     return true;
   }
 
-  // Статистика и аналитика
-  if (lowerQuery.includes('рейтинг') || lowerQuery.includes('топ') || lowerQuery.includes('данн') ||
-      lowerQuery.includes('отчет') || lowerQuery.includes('статистик') || lowerQuery.includes('исследован') ||
-      lowerQuery.includes('процент') || lowerQuery.includes('рост') || lowerQuery.includes('паден')) {
+  // Новости и события с конкретными темами
+  if ((lowerQuery.includes('новост') && (lowerQuery.includes('сегодня') || lowerQuery.includes('последн'))) ||
+      lowerQuery.includes('что произошло') || lowerQuery.includes('последние события')) {
     return true;
   }
 
-  // Тренды и популярность
-  if (lowerQuery.includes('популярн') || lowerQuery.includes('мод') || lowerQuery.includes('тренд') ||
-      lowerQuery.includes('хит') || lowerQuery.includes('бестселлер')) {
+  // Конкретные поисковые запросы
+  if (lowerQuery.includes('что такое') || lowerQuery.includes('определение') ||
+      lowerQuery.includes('кто такой') || lowerQuery.includes('где находится')) {
     return true;
   }
 
-  // Новости и события
-  if (lowerQuery.includes('новост') || lowerQuery.includes('событи') || lowerQuery.includes('происшеств') ||
-      lowerQuery.includes('анонс') || lowerQuery.includes('мероприят') || lowerQuery.includes('конференц')) {
-    return true;
-  }
-
-  // Поисковые запросы
-  if (lowerQuery.includes('что такое') || lowerQuery.includes('определен') || lowerQuery.includes('значен') ||
-      lowerQuery.includes('кто такой') || lowerQuery.includes('где наход')) {
-    return true;
-  }
-
-  // Технические запросы
-  if (lowerQuery.includes('как сделат') || lowerQuery.includes('инструкц') || lowerQuery.includes('туториал') ||
-      lowerQuery.includes('документац') || lowerQuery.includes('справочник')) {
-    return true;
-  }
-
-  // Погода и география
-  if (lowerQuery.includes('погод') || lowerQuery.includes('температур') || lowerQuery.includes('климат') ||
-      lowerQuery.includes('расписан') || lowerQuery.includes('график') || lowerQuery.includes('координат')) {
-    return true;
-  }
-
-  // Запросы на визуализацию данных - ВСЕГДА требуют поиска реальных данных
-  if (lowerQuery.includes('визуализ') || lowerQuery.includes('покажи график') ||
-      lowerQuery.includes('данные') && (lowerQuery.includes('график') || lowerQuery.includes('диаграмм'))) {
-    return true; // Всегда искать реальные данные для визуализации
-  }
-
-  // Сложные запросы (более 4 слов или с вопросительными словами)
-  const questionWords = ['кто', 'что', 'где', 'когда', 'почему', 'как', 'какой', 'сколько'];
-  if (query.split(' ').length > 4 || questionWords.some(word => lowerQuery.includes(word))) {
-    return true;
-  }
-
-  // Специфические термины, которые могут требовать поиска
-  const specificTerms = ['ai', 'искусственный интеллект', 'нейросеть', 'блокчейн', 'криптовалют',
-                         'технолог', 'инновац', 'стартап', 'компани', 'корпорац'];
-  if (specificTerms.some(term => lowerQuery.includes(term))) {
-    return true;
-  }
-
-  // Определяем сложные запросы (исключая простые)
-  const isComplexQuery = (() => {
-    // Длина запроса (>50 символов считается сложным)
-    if (query.length > 50) return true;
-
-    // Наличие вопросительных слов
-    const questionWords = ['что', 'как', 'почему', 'зачем', 'где', 'когда', 'кто', 'какой', 'какая', 'какие', 'какое'];
-    const hasQuestionWord = questionWords.some(word => lowerQuery.includes(word));
-
-    // Наличие сложных конструкций
-    const complexPatterns = [
-      /\bсколько\b/,
-      /\bгде\b.*\bнаходится\b/,
-      /\bкак\b.*\bработает\b/,
-      /\bчто\b.*\bтакое\b/,
-      /\bкакие\b.*\bлучшие\b/,
-      /\bкакой\b.*\bсамый\b/,
-      /\bпочему\b.*\bпроисходит\b/,
-      /\bкто\b.*\bсоздал\b/
-    ];
-    const hasComplexPattern = complexPatterns.some(pattern => pattern.test(lowerQuery));
-
-    // Количество слов (>7 слов считается сложным)
-    const wordCount = query.split(/\s+/).length;
-    const hasManyWords = wordCount > 7;
-
-    return hasQuestionWord || hasComplexPattern || hasManyWords;
-  })();
-
-  // Исключаем очень простые запросы
-  const simpleQueries = [
-    'привет', 'здравствуй', 'спасибо', 'пока', 'до свидания',
-    'да', 'нет', 'хорошо', 'плохо', 'нормально',
-    'ок', 'окей', 'ладно', 'понятно', 'ясно'
-  ];
-
-  const isSimpleQuery = simpleQueries.some(simple =>
-    lowerQuery.trim() === simple ||
-    lowerQuery.trim().startsWith(simple + ' ') ||
-    lowerQuery.trim().endsWith(' ' + simple) ||
-    lowerQuery.trim().includes(' ' + simple + ' ')
-  );
-
-  // Исключаем запросы на создание контента
-  const contentCreationKeywords = [
-    'напиши', 'создай', 'разработай', 'придумай', 'предложи',
-    'составь', 'опиши', 'расскажи', 'продолжи'
-  ];
-
-  const isContentCreation = contentCreationKeywords.some(keyword =>
-    lowerQuery.includes(keyword)
-  );
-
-  // Возвращаем true если:
-  // 1. Запрос сложный И НЕ простой И НЕ на создание контента
-  return (isComplexQuery && !isSimpleQuery) && !isContentCreation;
+  // Только специфические случаи, когда действительно нужен поиск
+  return false;
 };
 
 export interface Message {
@@ -463,7 +366,7 @@ export const sendChatMessage = async (
       let plan: PlanStep[] = [];
       let searchResults = '';
 
-      // Всегда генерируем план для сложных запросов
+      // Проверяем тип запроса для генерации плана
       const isSimpleQuery = ['привет', 'здравствуй', 'спасибо', 'пока', 'до свидания', 'да', 'нет', 'хорошо', 'плохо', 'нормально', 'ок', 'окей', 'ладно', 'понятно', 'ясно'].some(simple =>
         lowerQuery.trim() === simple ||
         lowerQuery.trim().startsWith(simple + ' ') ||
@@ -471,15 +374,40 @@ export const sendChatMessage = async (
         lowerQuery.trim().includes(' ' + simple + ' ')
       );
 
-      // Генерируем план для всех не-простых запросов
-      if (!isSimpleQuery) {
+      // Генерируем план только для реальных задач и проектов (не для обычных разговоров)
+      const shouldGeneratePlan = !isSimpleQuery && (
+        // Явные запросы на планирование
+        lowerQuery.includes('план') ||
+        lowerQuery.includes('разработ') ||
+        lowerQuery.includes('созда') ||
+        lowerQuery.includes('проект') ||
+        lowerQuery.includes('задач') ||
+        lowerQuery.includes('шаг') ||
+        // Многоэтапные инструкции
+        (lowerQuery.split(/[.!?]/).length > 2) ||
+        // Длинные запросы с множественными действиями
+        (lowerQuery.length > 150 && lowerQuery.split(' ').length > 20)
+      );
+
+      if (shouldGeneratePlan) {
         plan = await generateResponsePlan(userMessage.content, model);
       }
 
       // Проверяем, требуется ли поиск в интернете
       // Для запросов на визуализацию поиск ВСЕГДА нужен (даже если это content creation)
-      const isVisualizationRequest = lowerQuery.includes('визуализ') || lowerQuery.includes('покажи график') ||
-        (lowerQuery.includes('данные') && (lowerQuery.includes('график') || lowerQuery.includes('диаграмм')));
+      const isVisualizationRequest = (
+        // Явные запросы на визуализацию
+        lowerQuery.includes('визуализ') ||
+        lowerQuery.includes('покажи график') ||
+        lowerQuery.includes('создай график') ||
+        lowerQuery.includes('нарисуй график') ||
+        lowerQuery.includes('построй график') ||
+        lowerQuery.includes('сделай диаграмм') ||
+        // Специфические запросы с данными И графикой
+        (lowerQuery.includes('данные') && lowerQuery.includes('график')) ||
+        (lowerQuery.includes('статистик') && lowerQuery.includes('график')) ||
+        (lowerQuery.includes('числа') && lowerQuery.includes('диаграмм'))
+      );
 
       if (!isContentCreation || isVisualizationRequest) {
         const needsWebSearch = requiresWebSearch(userMessage.content);
@@ -704,50 +632,33 @@ const generateResponsePlan = async (userQuestion: string, model: string): Promis
   }
 
   const planPrompt = `
-Проанализируй вопрос пользователя и создай подробный, структурированный план ответа. Раздели сложные задачи на логические этапы.
+ВЫПОЛНИ задачу пользователя напрямую. НЕ предлагай варианты - ДЕЙСТВУЙ!
 
-Вопрос пользователя: "${userQuestion}"
+Задача: "${userQuestion}"
 
-СПЕЦИАЛЬНЫЕ СЛУЧАИ:
-- Если запрос содержит "визуализируй", "покажи график" или "данные для графика" - это запрос на визуализацию. Создай план с этапами поиска реальных статистических данных в интернете, их анализа и создания визуализации.
-- ВАЖНО: При создании визуализации НЕ включай JSON код в текст ответа. JSON должен генерироваться отдельно для автоматического распознавания системой визуализации.
-- Для запросов о данных бизнеса/финансов (прибыль, продажи, рынок, кофе, недвижимость) - включи этапы: поиск конкретных цифр и статистических данных, извлечение числовых показателей из найденной информации, анализ трендов.
-- КРИТИЧНО: Анализируй результаты поиска и извлекай ВСЕ найденные числовые данные (суммы в рублях, проценты, количества). Не используй плейсхолдеры XXXX - используй реальные цифры из поиска или создавай обоснованные оценки на их основе.
-- Структура ответа: сначала анализ найденных данных с конкретными цифрами, затем система автоматически создаст визуализацию из JSON данных.
-- ДЛЯ ВИЗУАЛИЗАЦИЙ: Всегда включай этап "Анализ найденных данных и подготовка визуализации" где AI должен использовать реальные данные из поиска.
+ИНСТРУКЦИИ:
+1. РАЗБЕРИСЬ в задаче и ВЫПОЛНИ её
+2. ЕСЛИ нужно искать информацию - найди конкретные данные
+3. ЕСЛИ нужно анализировать - проведи анализ
+4. ЕСЛИ нужно планировать - создай план действий
+5. ЕСЛИ нужно создавать - создай результат
 
-ОПРЕДЕЛИ ТИП ЗАДАЧИ:
-- Если это простой вопрос (приветствие, погода, факты) - создай 1-2 этапа
-- Если это анализ, исследование или планирование - создай 4-8 детальных этапов
-- Если это творческая задача (написание, дизайн) - создай 3-6 этапов
-- Если это бизнес-задача (план, стратегия, анализ рынка) - создай 5-10 этапов
-- Если это визуализация данных - создай 3-5 этапов: анализ требований, генерация данных, создание визуализации
+СОЗДАЙ ПЛАН ВЫПОЛНЕНИЯ:
+- Раздели задачу на практические шаги
+- Каждый шаг должен быть выполнимым
+- Укажи что именно делать на каждом этапе
+- Используй реальные данные, не плейсхолдеры
 
-Для бизнес-плана кофейни включи следующие разделы:
-1. Анализ рынка и конкурентов
-2. Целевая аудитория и концепция
-3. Финансовый план и бюджетирование
-4. Маркетинг и продвижение
-5. Операционный план
-6. Риски и их минимизация
-
-Каждый этап должен:
-1. Иметь четкое, конкретное название
-2. Содержать подробное описание действий
-3. Быть логически связанным с предыдущими этапами
-4. Быть реалистичным для выполнения
-5. Если вопрос касается данных/статистики - добавить этап визуализации
-
-Верни план в формате JSON:
+ФОРМАТ ОТВЕТА - JSON массив:
 [
   {
-    "step": "Краткое название этапа",
-    "description": "Подробное описание что делать на этом этапе, включая конкретные действия и ожидаемые результаты",
+    "step": "Название шага",
+    "description": "Что конкретно делать на этом шаге",
     "completed": false
   }
 ]
 
-План должен быть практичным, реалистичным и помогать дать полный, профессиональный ответ.
+НЕ ПРЕДЛАГАЙ ВАРИАНТЫ - ВЫПОЛНЯЙ ЗАДАЧУ!
 `;
 
   const response = await fetch(`${API_BASE_URL}/chat`, {
