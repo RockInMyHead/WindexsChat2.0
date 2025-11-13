@@ -9,7 +9,16 @@ const PORT = 1062;
 
 // Настройка прокси
 const PROXY_URL = process.env.PROXY_URL || 'http://pb3jms:85pNLX@45.147.180.58:8000';
-const proxyAgent = new HttpsProxyAgent(PROXY_URL);
+const proxyAgent = process.env.PROXY_URL ? new HttpsProxyAgent(PROXY_URL) : null;
+
+// Функция для создания fetch опций с прокси
+const getFetchOptions = (additionalOptions = {}) => ({
+  ...(proxyAgent && { agent: proxyAgent }),
+  ...additionalOptions
+});
+
+console.log('🚀 Server starting with proxy:', proxyAgent ? 'ENABLED' : 'DISABLED');
+console.log('📡 Proxy URL:', PROXY_URL || 'Not set (using default)');
 
 // Middleware
 app.use(cors({
@@ -139,7 +148,7 @@ app.get('/api/web-search', async (req, res) => {
 
         if (cryptoIds.length > 0) {
           const cryptoResponse = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${cryptoIds.join(',')}&vs_currencies=usd,rub,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`, {
-            agent: proxyAgent,
+            ...(proxyAgent && { agent: proxyAgent }),
             headers: {
               'User-Agent': 'Mozilla/5.0 (compatible; WindexsAI/1.0)',
               'Accept': 'application/json'
@@ -187,9 +196,7 @@ app.get('/api/web-search', async (req, res) => {
       console.log('Searching DuckDuckGo for:', query);
 
       // Сначала пробуем оригинальный запрос
-      let instantResponse = await fetch(`https://api.duckduckgo.com/?q=${encodedQuery}&format=json&no_redirect=1&no_html=1`, {
-        agent: proxyAgent
-      });
+      let instantResponse = await fetch(`https://api.duckduckgo.com/?q=${encodedQuery}&format=json&no_redirect=1&no_html=1`, getFetchOptions());
       let instantData = null;
 
       if (instantResponse.ok) {
@@ -211,9 +218,7 @@ app.get('/api/web-search', async (req, res) => {
           .replace(/программирован/i, 'programming');
 
         console.log('Trying English query:', englishQuery);
-        const englishResponse = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(englishQuery)}&format=json&no_redirect=1&no_html=1`, {
-          agent: proxyAgent
-        });
+        const englishResponse = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(englishQuery)}&format=json&no_redirect=1&no_html=1`, getFetchOptions());
 
         if (englishResponse.ok) {
           instantData = await englishResponse.json();
@@ -258,14 +263,10 @@ app.get('/api/web-search', async (req, res) => {
       const wikiQuery = query.replace(/\s+/g, '_');
 
       // Сначала пробуем русский
-      let wikiResponse = await fetch(`https://ru.wikipedia.org/api/rest_v1/page/summary/${wikiQuery}`, {
-        agent: proxyAgent
-      });
+      let wikiResponse = await fetch(`https://ru.wikipedia.org/api/rest_v1/page/summary/${wikiQuery}`, getFetchOptions());
       if (!wikiResponse.ok) {
         // Если русский не найден, пробуем английский
-        wikiResponse = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${wikiQuery}`, {
-          agent: proxyAgent
-        });
+        wikiResponse = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${wikiQuery}`, getFetchOptions());
       }
 
       if (wikiResponse.ok) {
@@ -285,9 +286,7 @@ app.get('/api/web-search', async (req, res) => {
     if (lowerQuery.includes('что такое') || lowerQuery.includes('определение')) {
       try {
         const term = query.replace(/что такое\s+/i, '').replace(/определение\s+/i, '').trim();
-        const glosbeResponse = await fetch(`https://glosbe.com/gapi/translate?from=ru&dest=en&format=json&phrase=${encodeURIComponent(term)}`, {
-          agent: proxyAgent
-        });
+        const glosbeResponse = await fetch(`https://glosbe.com/gapi/translate?from=ru&dest=en&format=json&phrase=${encodeURIComponent(term)}`, getFetchOptions());
 
         if (glosbeResponse.ok) {
           const glosbeData = await glosbeResponse.json();
@@ -357,9 +356,7 @@ app.get('/api/web-search', async (req, res) => {
 
         for (const businessQuery of businessQueries) {
           try {
-            const businessSearch = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(businessQuery)}&format=json&no_html=1&skip_disambig=1`, {
-              agent: proxyAgent
-            });
+            const businessSearch = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(businessQuery)}&format=json&no_html=1&skip_disambig=1`, getFetchOptions());
             if (businessSearch.ok) {
               const data = await businessSearch.json();
               console.log(`Business search results for "${businessQuery}":`, data.AbstractText);
@@ -397,9 +394,7 @@ app.get('/api/web-search', async (req, res) => {
 
           for (const officialQuery of officialQueries) {
             try {
-              const officialSearch = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(officialQuery)}&format=json&no_html=1&skip_disambig=1`, {
-                agent: proxyAgent
-              });
+              const officialSearch = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(officialQuery)}&format=json&no_html=1&skip_disambig=1`, getFetchOptions());
               if (officialSearch.ok) {
                 const data = await officialSearch.json();
                 if (data.AbstractText && data.AbstractText.length > 50) {
@@ -423,9 +418,7 @@ app.get('/api/web-search', async (req, res) => {
             'Кофейня', 'Рынок кофе в России', 'Кофеиндустрия', 'Кофе в России', 'Общественное питание в России'
           ];
           for (const wikiQuery of wikiQueries) {
-            const wikiResponse = await fetch(`https://ru.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiQuery)}`, {
-              agent: proxyAgent
-            });
+            const wikiResponse = await fetch(`https://ru.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiQuery)}`, getFetchOptions());
             if (wikiResponse.ok) {
               const wikiData = await wikiResponse.json();
               if (wikiData.extract && (
@@ -451,9 +444,7 @@ app.get('/api/web-search', async (req, res) => {
         try {
           const enWikiQueries = ['Coffeehouse', 'Coffee industry in Russia', 'Coffee market', 'Foodservice industry in Russia'];
           for (const wikiQuery of enWikiQueries) {
-            const wikiResponse = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiQuery)}`, {
-              agent: proxyAgent
-            });
+            const wikiResponse = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiQuery)}`, getFetchOptions());
             if (wikiResponse.ok) {
               const wikiData = await wikiResponse.json();
               if (wikiData.extract && (wikiData.extract.includes('Russia') || wikiData.extract.includes('market') || wikiData.extract.includes('coffee'))) {
@@ -484,9 +475,7 @@ app.get('/api/web-search', async (req, res) => {
           ? `${encodedQuery} бизнес россия`
           : encodedQuery;
 
-        const newsResponse = await fetch(`https://newsapi.org/v2/everything?q=${searchQuery}&language=ru&sortBy=publishedAt&pageSize=5&apiKey=demo`, {
-          agent: proxyAgent
-        });
+        const newsResponse = await fetch(`https://newsapi.org/v2/everything?q=${searchQuery}&language=ru&sortBy=publishedAt&pageSize=5&apiKey=demo`, getFetchOptions());
         if (newsResponse.ok) {
           const newsData = await newsResponse.json();
           if (newsData.articles && newsData.articles.length > 0) {
@@ -520,9 +509,7 @@ app.get('/api/web-search', async (req, res) => {
     // 6. Технические вопросы через Stack Exchange
     if (lowerQuery.includes('как') || lowerQuery.includes('почему') || lowerQuery.includes('ошибк') || lowerQuery.includes('программировани')) {
       try {
-        const stackResponse = await fetch(`https://api.stackexchange.com/2.3/search?order=desc&sort=relevance&tagged=javascript&intitle=${encodedQuery}&site=stackoverflow`, {
-          agent: proxyAgent
-        });
+        const stackResponse = await fetch(`https://api.stackexchange.com/2.3/search?order=desc&sort=relevance&tagged=javascript&intitle=${encodedQuery}&site=stackoverflow`, getFetchOptions());
         if (stackResponse.ok) {
           const stackData = await stackResponse.json();
           if (stackData.items && stackData.items.length > 0) {
@@ -576,20 +563,19 @@ app.post('/api/chat', async (req, res) => {
       return res.status(500).json({ error: 'OpenAI API key not configured on server' });
     }
 
-    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', getFetchOptions({
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
       },
-      agent: proxyAgent,
       body: JSON.stringify({
         model: model === 'pro' ? 'gpt-4' : 'gpt-3.5-turbo',
         messages,
         stream,
         temperature: 0.7,
       }),
-    });
+    }));
 
     if (!openaiResponse.ok) {
       const errorText = await openaiResponse.text();
