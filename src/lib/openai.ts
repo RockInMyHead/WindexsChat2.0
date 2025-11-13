@@ -337,7 +337,7 @@ export interface PlanStep {
 
 export const sendChatMessage = async (
   messages: Message[],
-  model: string = "gpt-3.5-turbo",
+  model: string = "gpt-4o-mini",
   onChunk?: (chunk: string) => void,
   onPlanGenerated?: (plan: PlanStep[]) => void,
   onStepStart?: (stepIndex: number, step: PlanStep) => void

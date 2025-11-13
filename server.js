@@ -566,7 +566,7 @@ app.get('/api/web-search', async (req, res) => {
 // OpenAI Chat API proxy (обход CORS ограничений)
 app.post('/api/chat', async (req, res) => {
   try {
-    const { messages, model = 'gpt-3.5-turbo', stream = false } = req.body;
+    const { messages, model = 'gpt-4o-mini', stream = false } = req.body;
 
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: 'Messages array is required' });
@@ -586,10 +586,11 @@ app.post('/api/chat', async (req, res) => {
       },
       dispatcher: proxyAgent,
       body: JSON.stringify({
-        model: model === 'pro' ? 'gpt-4' : 'gpt-3.5-turbo',
+        model: model === 'pro' ? 'gpt-4o' : 'gpt-4o-mini',
         messages,
         stream,
         temperature: 0.7,
+        max_tokens: model === 'pro' ? 8000 : 4000, // Больше токенов для Pro модели
       }),
     });
 
