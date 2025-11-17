@@ -10,17 +10,26 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 1062;
+const PORT = 1062;
 
 // Настройка прокси для Undici (встроенный fetch в Node.js)
-const PROXY_URL = process.env.PROXY_URL || 'http://pb3jms:85pNLX@45.147.180.58:8000';
-const proxyAgent = new ProxyAgent({
-  uri: PROXY_URL
-});
+// const PROXY_URL = process.env.PROXY_URL || 'http://pb3jms:85pNLX@45.147.180.58:8000';
+// const proxyAgent = new ProxyAgent({
+//   uri: PROXY_URL
+// });
+const proxyAgent = undefined; // Временно отключаем прокси для тестирования
+
+// Функция для fetch с опциональным прокси
+const fetchWithProxy = (url, options = {}) => {
+  if (proxyAgent) {
+    return fetch(url, { ...options, dispatcher: proxyAgent });
+  }
+  return fetch(url, options);
+};
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:8080', 'http://localhost:8081', 'http://localhost:8082', 'http://localhost:8083', 'http://localhost:3000', 'http://localhost:1062', 'http://127.0.0.1:8080', 'http://127.0.0.1:8081', 'http://127.0.0.1:8082', 'http://127.0.0.1:8083', 'http://127.0.0.1:3000', 'http://127.0.0.1:1062', 'https://ai.windexs.ru', 'https://www.ai.windexs.ru', 'http://ai.windexs.ru', 'http://www.ai.windexs.ru'],
+  origin: ['http://localhost:8080', 'http://localhost:8081', 'http://localhost:8082', 'http://localhost:8083', 'http://localhost:3000', 'http://localhost:1062', 'http://127.0.0.1:8080', 'http://127.0.0.1:8081', 'http://127.0.0.1:8082', 'http://127.0.0.1:8083', 'http://127.0.0.1:3000', 'http://127.0.0.1:1062', 'https://ai.windexs.ru', 'https://www.ai.windexs.ru'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -145,8 +154,7 @@ app.get('/api/web-search', async (req, res) => {
 
 
         if (cryptoIds.length > 0) {
-          const cryptoResponse = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${cryptoIds.join(',')}&vs_currencies=usd,rub,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`, {
-            dispatcher: proxyAgent,
+          const cryptoResponse = await fetchWithProxy(`https://api.coingecko.com/api/v3/simple/price?ids=${cryptoIds.join(',')}&vs_currencies=usd,rub,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`, {
             headers: {
               'User-Agent': 'Mozilla/5.0 (compatible; WindexsAI/1.0)',
               'Accept': 'application/json'
@@ -194,9 +202,7 @@ app.get('/api/web-search', async (req, res) => {
       console.log('Searching DuckDuckGo for:', query);
 
       // Сначала пробуем оригинальный запрос
-      let instantResponse = await fetch(`https://api.duckduckgo.com/?q=${encodedQuery}&format=json&no_redirect=1&no_html=1`, {
-        dispatcher: proxyAgent
-      });
+      let instantResponse = await fetchWithProxy(`https://api.duckduckgo.com/?q=${encodedQuery}&format=json&no_redirect=1&no_html=1`);
       let instantData = null;
 
       if (instantResponse.ok) {
@@ -218,9 +224,7 @@ app.get('/api/web-search', async (req, res) => {
           .replace(/программирован/i, 'programming');
 
         console.log('Trying English query:', englishQuery);
-        const englishResponse = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(englishQuery)}&format=json&no_redirect=1&no_html=1`, {
-          dispatcher: proxyAgent
-        });
+        const englishResponse = await fetchWithProxy(`https://api.duckduckgo.com/?q=${encodeURIComponent(englishQuery)}&format=json&no_redirect=1&no_html=1`);
 
         if (englishResponse.ok) {
           instantData = await englishResponse.json();
@@ -265,14 +269,10 @@ app.get('/api/web-search', async (req, res) => {
       const wikiQuery = query.replace(/\s+/g, '_');
 
       // Сначала пробуем русский
-      let wikiResponse = await fetch(`https://ru.wikipedia.org/api/rest_v1/page/summary/${wikiQuery}`, {
-        dispatcher: proxyAgent
-      });
+      let wikiResponse = await fetchWithProxy(`https://ru.wikipedia.org/api/rest_v1/page/summary/${wikiQuery}`);
       if (!wikiResponse.ok) {
         // Если русский не найден, пробуем английский
-        wikiResponse = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${wikiQuery}`, {
-          dispatcher: proxyAgent
-        });
+        wikiResponse = await fetchWithProxy(`https://en.wikipedia.org/api/rest_v1/page/summary/${wikiQuery}`);
       }
 
       if (wikiResponse.ok) {
@@ -292,9 +292,7 @@ app.get('/api/web-search', async (req, res) => {
     if (lowerQuery.includes('что такое') || lowerQuery.includes('определение')) {
       try {
         const term = query.replace(/что такое\s+/i, '').replace(/определение\s+/i, '').trim();
-        const glosbeResponse = await fetch(`https://glosbe.com/gapi/translate?from=ru&dest=en&format=json&phrase=${encodeURIComponent(term)}`, {
-          dispatcher: proxyAgent
-        });
+        const glosbeResponse = await fetchWithProxy(`https://glosbe.com/gapi/translate?from=ru&dest=en&format=json&phrase=${encodeURIComponent(term)}`);
 
         if (glosbeResponse.ok) {
           const glosbeData = await glosbeResponse.json();
@@ -364,9 +362,7 @@ app.get('/api/web-search', async (req, res) => {
 
         for (const businessQuery of businessQueries) {
           try {
-            const businessSearch = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(businessQuery)}&format=json&no_html=1&skip_disambig=1`, {
-              dispatcher: proxyAgent
-            });
+            const businessSearch = await fetchWithProxy(`https://api.duckduckgo.com/?q=${encodeURIComponent(businessQuery)}&format=json&no_html=1&skip_disambig=1`);
             if (businessSearch.ok) {
               const data = await businessSearch.json();
               console.log(`Business search results for "${businessQuery}":`, data.AbstractText);
@@ -639,6 +635,64 @@ app.post('/api/chat', async (req, res) => {
       error: 'Failed to process chat request',
       details: error.message
     });
+  }
+});
+
+// Анализ намерения пользователя создать IT-продукт
+app.post('/api/analyze-intent', async (req, res) => {
+  try {
+    const { query, task } = req.body;
+
+    if (!query) {
+      return res.status(400).json({ error: 'Query is required' });
+    }
+
+    const API_KEY = process.env.OPENAI_API_KEY;
+    if (!API_KEY) {
+      console.error('OpenAI API key not found');
+      return res.status(500).json({ error: 'API key not configured' });
+    }
+
+    // Используем быстрый анализ с помощью gpt-4o-mini для экономии токенов
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: 'Ты анализируешь запросы пользователей. Определи, хочет ли пользователь создать IT-продукт (сайт, приложение, код, программу, API, базу данных, программное обеспечение и т.д.). Верни только "true" или "false".'
+          },
+          {
+            role: 'user',
+            content: `Запрос пользователя: "${query}"\n\nЭто запрос на создание IT-продукта? Верни только true или false.`
+          }
+        ],
+        max_tokens: 10,
+        temperature: 0.1,
+      }),
+      dispatcher: proxyAgent
+    });
+
+    if (!response.ok) {
+      console.error('OpenAI API error:', response.status, response.statusText);
+      return res.status(500).json({ error: 'Failed to analyze intent' });
+    }
+
+    const data = await response.json();
+    const result = data.choices[0]?.message?.content?.trim().toLowerCase();
+
+    const isCodingIntent = result === 'true' || result === 'да' || result === 'yes';
+
+    res.json({ isCodingIntent });
+
+  } catch (error) {
+    console.error('Error in analyze-intent:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

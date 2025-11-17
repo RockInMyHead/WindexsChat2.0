@@ -9,9 +9,27 @@ const isApiAvailable = () => {
 
 // Функция для поиска в интернете через backend API (обход CORS)
 const searchWeb = async (query: string): Promise<string> => {
+  // Автоматически добавляем год к запросам, если это актуальные данные
+  let enhancedQuery = query;
+  const lowerQuery = query.toLowerCase();
+
+  // Всегда добавляем 2025 год для актуальных данных, если год не указан
+  const needsYear = lowerQuery.includes('рынок') || lowerQuery.includes('статистика') ||
+                   lowerQuery.includes('тренд') || lowerQuery.includes('анализ') ||
+                   lowerQuery.includes('данные') || lowerQuery.includes('отчет') ||
+                   lowerQuery.includes('исследование') || lowerQuery.includes('прогноз') ||
+                   lowerQuery.includes('бизнес') || lowerQuery.includes('финанс') ||
+                   lowerQuery.includes('экономик') || lowerQuery.includes('рост') ||
+                   lowerQuery.includes('развитие') || lowerQuery.includes('состояние');
+
+  if (needsYear && !/\b(202\d|201\d|200\d)\b/.test(query)) {
+    enhancedQuery = `${query} 2025 год`;
+    console.log('Enhanced search query with 2025 year:', enhancedQuery);
+  }
+
   try {
     // Используем backend endpoint для поиска, который обходит CORS ограничения
-    const searchResponse = await fetch(`${API_BASE_URL.replace('/api', '')}/web-search?q=${encodeURIComponent(query)}`, {
+    const searchResponse = await fetch(`${API_BASE_URL}/web-search?q=${encodeURIComponent(enhancedQuery)}`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -282,9 +300,77 @@ const searchWebFallback = async (query: string): Promise<string> => {
   }
 };
 
+// Функция выполнения параллельного поиска по всем запросам из плана
+const executeParallelSearches = async (
+  plan: PlanStep[],
+  onSearchProgress?: (queries: string[]) => void
+): Promise<Map<string, string>> => {
+  const searchResults = new Map<string, string>();
+  const allQueries: Array<{ query: string; purpose: string }> = [];
+
+  // Собираем все поисковые запросы из плана
+  plan.forEach((step, stepIndex) => {
+    if (step.searchQueries && step.searchQueries.length > 0) {
+      // Сортируем по приоритету (high → medium → low)
+      const priorityOrder = { 'high': 0, 'medium': 1, 'low': 2 };
+      const sortedQueries = [...step.searchQueries].sort(
+        (a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]
+      );
+
+      sortedQueries.forEach((sq) => {
+        allQueries.push({
+          query: sq.query,
+          purpose: `[Шаг ${stepIndex + 1}: ${step.step}] ${sq.purpose}`
+        });
+      });
+
+      // Обновляем прогресс - показываем текущие активные запросы
+      if (onSearchProgress && allQueries.length > 0) {
+        const activeQueries = allQueries.map(item => item.query);
+        onSearchProgress(activeQueries);
+      }
+    }
+  });
+
+  // Выполняем поиски параллельно (но ограничиваем одновременные запросы)
+  const maxConcurrent = 3;
+  for (let i = 0; i < allQueries.length; i += maxConcurrent) {
+    const batch = allQueries.slice(i, i + maxConcurrent);
+    const promises = batch.map(async (item) => {
+      try {
+        const result = await searchWeb(item.query);
+        searchResults.set(`${item.query}||${item.purpose}`, result);
+        console.log(`✓ Поиск выполнен: ${item.query}`);
+      } catch (error) {
+        console.error(`✗ Ошибка поиска: ${item.query}`, error);
+        searchResults.set(`${item.query}||${item.purpose}`, `[Ошибка поиска: ${error}]`);
+      }
+    });
+
+    await Promise.all(promises);
+  }
+
+  return searchResults;
+};
+
 // Функция определения необходимости веб-поиска (расширенная логика)
 const requiresWebSearch = (query: string): boolean => {
   const lowerQuery = query.toLowerCase();
+
+  // Простые запросы никогда не требуют поиска
+  const isVerySimpleQuery = ['привет', 'hi', 'hello', 'здравствуй', 'здравствуйте', 'спасибо', 'благодарю', 'пока', 'до свидания', 'прощай', 'да', 'нет', 'ага', 'угу', 'хорошо', 'плохо', 'нормально', 'ок', 'окей', 'ладно', 'понятно', 'ясно', 'понял', 'хорошо'].some(simple =>
+    lowerQuery.trim() === simple ||
+    lowerQuery.trim().startsWith(simple + ' ') ||
+    lowerQuery.trim().endsWith(' ' + simple) ||
+    lowerQuery.trim().includes(' ' + simple + ' ')
+  );
+
+  const isTooShort = lowerQuery.trim().length < 3;
+  const isOnlyEmojis = /^[\p{Emoji}\s]+$/u.test(lowerQuery.trim());
+
+  if (isVerySimpleQuery || isTooShort || isOnlyEmojis) {
+    return false;
+  }
 
   // ВИЗУАЛИЗАЦИИ: всегда требуют поиска актуальных данных
   if (lowerQuery.includes('визуализ') || lowerQuery.includes('покажи график') ||
@@ -292,35 +378,99 @@ const requiresWebSearch = (query: string): boolean => {
     return true;
   }
 
-  // Финансовые данные с конкретными запросами
-  if ((lowerQuery.includes('курс') && (lowerQuery.includes('биткоин') || lowerQuery.includes('доллар') || lowerQuery.includes('евро'))) ||
-      (lowerQuery.includes('цена') && (lowerQuery.includes('крипто') || lowerQuery.includes('биткоин'))) ||
-      (lowerQuery.includes('стоимост') && (lowerQuery.includes('недвижимост') || lowerQuery.includes('квартир'))) ||
+  // =========== КЛЮЧЕВЫЕ СЛОВА, ТРЕБУЮЩИЕ ВЕСА ПОИСКА ===========
+  
+  // 1. АКТУАЛЬНОСТЬ И ВРЕМЯ (требуют свежей информации)
+  if (/\b(сейчас|сегодня|вчера|завтра|текущ|последн|новый|современн|актуальн|свеж|недавн|сегодняшн|новост|событи|происшествие)\b/i.test(lowerQuery)) {
+    return true;
+  }
+
+  // 2. ФИНАНСОВЫЕ ДАННЫЕ И ЦЕНЫ
+  if (/\b(курс|цена|стоимост|цены|выплат|кредит|ставка|процент|доход|налог|сбор|взнос)\b/i.test(lowerQuery) ||
+      /\b(биткоин|доллар|евро|рубль|криптовалют|крипто|ценная бумага|акция|облигация)\b/i.test(lowerQuery) ||
       /\b(btc|eth|bnb|ada|sol|dot|avax|matic|link|uni|usdc|usdt)\b/i.test(lowerQuery)) {
     return true;
   }
 
-  // Статистика и аналитика с конкретными данными
-  if ((lowerQuery.includes('рейтинг') && lowerQuery.includes('фильм')) ||
-      (lowerQuery.includes('топ') && (lowerQuery.includes('игра') || lowerQuery.includes('фильм'))) ||
-      (lowerQuery.includes('статистик') && (lowerQuery.includes('продаж') || lowerQuery.includes('рынок'))) ||
-      (lowerQuery.includes('отчет') && lowerQuery.includes('финансов'))) {
+  // 3. СТАТИСТИКА, РЕЙТИНГИ, ТОП СПИСКИ
+  if (/\b(рейтинг|топ|лучш|худш|статистик|данные|отчет|анализ|исследован|опрос|результат)\b/i.test(lowerQuery)) {
     return true;
   }
 
-  // Новости и события с конкретными темами
-  if ((lowerQuery.includes('новост') && (lowerQuery.includes('сегодня') || lowerQuery.includes('последн'))) ||
-      lowerQuery.includes('что произошло') || lowerQuery.includes('последние события')) {
+  // 4. НОВОСТИ, СОБЫТИЯ, ПРОИСШЕСТВИЯ
+  if (/\b(новост|событи|происшестви|трагед|катастроф|аварий|авари|сообщ|объявлен|зарегистр)\b/i.test(lowerQuery)) {
     return true;
   }
 
-  // Конкретные поисковые запросы
-  if (lowerQuery.includes('что такое') || lowerQuery.includes('определение') ||
-      lowerQuery.includes('кто такой') || lowerQuery.includes('где находится')) {
+  // 5. ГЕОГРАФИЧЕСКИЕ, ДЕМОГРАФИЧЕСКИЕ И СОЦИАЛЬНЫЕ ДАННЫЕ
+  if (/\b(население|жител|город|страна|регион|область|район|адрес|место|географи|климат|погод|метеоролог|условия)\b/i.test(lowerQuery)) {
     return true;
   }
 
-  // Только специфические случаи, когда действительно нужен поиск
+  // 6. БИЗНЕС, МАРКЕТИНГ, РЫНОК (требуют актуальных данных)
+  if (/\b(бизнес|рынок|продаж|продажа|сбыт|конкурент|конкуренция|промышлен|индустри|секторе|компани|корпоратив)\b/i.test(lowerQuery)) {
+    return true;
+  }
+
+  // 7. СПРОС, ПРЕДЛОЖЕНИЕ, ТРЕНДЫ
+  if (/\b(спрос|предложени|тренд|мод|популярн|популярность|спрашиваемость|востребован)\b/i.test(lowerQuery)) {
+    return true;
+  }
+
+  // 8. ТЕХНОЛОГИИ И ИННОВАЦИИ (часто требуют свежих данных)
+  if (/\b(технолог|инновац|гаджет|приложени|платформ|сервис|облако|искусственн|машинн|программн|софт)\b/i.test(lowerQuery)) {
+    return true;
+  }
+
+  // 9. ЗДОРОВЬЕ И МЕДИЦИНА (требуют актуальной информации)
+  if (/\b(болезнь|лечени|препарат|лекарств|вирус|эпидеми|здоров|медицин|доктор|больниц|поликлиник)\b/i.test(lowerQuery)) {
+    return true;
+  }
+
+  // 10. ОБРАЗОВАНИЕ И КАРЬЕРА (часто изменяется)
+  if (/\b(университ|школ|вуз|программ|курс|специальност|карьер|професси|должност|зарплат|работ|вакансия)\b/i.test(lowerQuery)) {
+    return true;
+  }
+
+  // 11. ТУРИЗМ И ПУТЕШЕСТВИЯ
+  if (/\b(туризм|путеш|экскурс|гостинец|отель|пляж|достопримечательност|виза|паспорт|билет|авиалиния|маршрут)\b/i.test(lowerQuery)) {
+    return true;
+  }
+
+  // 12. ЗАКОН И ПРАВО (часто меняется законодательство)
+  if (/\b(закон|право|судь|адвокат|юрист|скоро|штраф|наказани|преступлени|суд|истец|ответчик)\b/i.test(lowerQuery)) {
+    return true;
+  }
+
+  // 13. СПОРТ И РАЗВЛЕЧЕНИЯ (результаты, рейтинги, расписания)
+  if (/\b(спорт|чемпионат|турнир|матч|игра|финал|команд|игрок|тренер|тренировк|результат|расписани)\b/i.test(lowerQuery)) {
+    return true;
+  }
+
+  // 14. ИНФОРМАЦИОННЫЕ ЗАПРОСЫ (что, кто, где, когда, как)
+  if (/^(что|кто|где|когда|как|почему|зачем)\b/i.test(lowerQuery.trim())) {
+    return true;
+  }
+
+  // 15. ОПРЕДЕЛЕНИЯ И ИНФОРМАЦИЯ О СУЩНОСТЯХ
+  if (/\b(определени|означает|есть|является|это|что это|кто это|информация|подробност|описани)\b/i.test(lowerQuery)) {
+    return true;
+  }
+
+  // Если запрос требует плана (содержит слова "план", "анализ") и это первый запрос - нужен поиск
+  if (/\b(план|анализ|исследован|изучи|выясни|узнай|подели информацию)\b/i.test(lowerQuery)) {
+    return true;
+  }
+
+  // Стандартно включаем поиск для большинства запросов если это не явная творческая задача
+  // Отключаем поиск только для явной творческой работы
+  const isCreativeOnly = /^(напиши|создай|придумай|сочини|нарисуй|спроектируй|разработай дизайн|напиши историю|напиши код без|создай картинку)\b/i.test(lowerQuery.trim());
+  
+  if (!isCreativeOnly && lowerQuery.length > 5) {
+    // Для большинства других запросов включаем поиск
+    return true;
+  }
+
   return false;
 };
 
@@ -329,20 +479,130 @@ export interface Message {
   content: string;
 }
 
+export interface SearchQuery {
+  query: string;
+  priority: 'high' | 'medium' | 'low';
+  purpose: string; // Для какого шага нужен поиск
+}
+
 export interface PlanStep {
   step: string;
   description: string;
+  searchQueries?: SearchQuery[]; // Что нужно найти для этого шага
   completed: boolean;
 }
 
+// Функция для обработки простых запросов без поиска
+const getSimpleResponse = async (query: string): Promise<string> => {
+  const lowerQuery = query.toLowerCase().trim();
+
+  // Простые приветствия
+  if (lowerQuery === 'привет' || lowerQuery === 'hi' || lowerQuery === 'hello') {
+    return 'Привет! 👋 Я WindexsAI - ваш помощник в решении различных задач. Чем могу помочь сегодня?';
+  }
+
+  if (lowerQuery === 'здравствуй' || lowerQuery === 'здравствуйте') {
+    return 'Здравствуйте! 👋 Я WindexsAI, готов помочь вам с любыми вопросами и задачами.';
+  }
+
+  // Простые ответы
+  if (['спасибо', 'благодарю'].includes(lowerQuery)) {
+    return 'Пожалуйста! 😊 Если вам понадобится помощь, я всегда здесь.';
+  }
+
+  if (['пока', 'до свидания', 'прощай'].includes(lowerQuery)) {
+    return 'До свидания! 👋 Возвращайтесь, когда понадобится помощь.';
+  }
+
+  if (['да', 'нет', 'ага', 'угу'].includes(lowerQuery)) {
+    return 'Понятно! Если у вас есть другие вопросы или задачи, я готов помочь.';
+  }
+
+  if (['хорошо', 'плохо', 'нормально', 'ок', 'окей', 'ладно'].includes(lowerQuery)) {
+    return 'Отлично! Если вам нужна помощь с чем-то конкретным, просто спросите.';
+  }
+
+  if (['понятно', 'ясно', 'понял'].includes(lowerQuery)) {
+    return 'Рад, что все понятно! Если возникнут вопросы, обращайтесь. 😉';
+  }
+
+  // Для очень коротких сообщений
+  if (lowerQuery.length < 3) {
+    return 'Привет! 👋 Я WindexsAI. Чем могу вам помочь?';
+  }
+
+  // Для эмодзи
+  if (/^[\p{Emoji}\s]+$/u.test(lowerQuery)) {
+    return '😊 Привет! Я WindexsAI, готов помочь вам с любыми задачами.';
+  }
+
+  // Для всех остальных простых запросов
+  return 'Привет! 👋 Я WindexsAI - ИИ-помощник для решения различных задач. Что именно вас интересует?';
+};
+
+// Функция для определения реальной модели OpenAI на основе выбранного режима
+const getActualModel = (selectedModel: string): string => {
+  switch (selectedModel) {
+    case 'pro':
+      return 'gpt-4o'; // Оптимизированная модель GPT-4o для Pro режима
+    case 'lite':
+    default:
+      return 'gpt-4o-mini'; // Быстрая и экономичная модель для Lite режима
+  }
+};
+
+// Получить параметры для модели
+const getModelParams = (selectedModel: string) => {
+  if (selectedModel === 'pro') {
+    return {
+      max_tokens: 1024, // оптимизированное ограничение для скорости в Pro режиме
+      temperature: 0.7  // стандартная креативность
+    };
+  }
+  return {
+    max_tokens: 4096, // полное ограничение для lite режима
+    temperature: 0.7  // стандартная креативность
+  };
+};
+
 export const sendChatMessage = async (
   messages: Message[],
-  model: string = "gpt-4o-mini",
+  selectedModel: string = "lite",
   onChunk?: (chunk: string) => void,
   onPlanGenerated?: (plan: PlanStep[]) => void,
-  onStepStart?: (stepIndex: number, step: PlanStep) => void
+  onStepStart?: (stepIndex: number, step: PlanStep) => void,
+  onSearchProgress?: (queries: string[]) => void,
+  internetEnabled?: boolean,
+  abortSignal?: AbortSignal
 ): Promise<string> => {
-  console.log('sendChatMessage called with:', { messagesCount: messages.length, model, hasOnChunk: !!onChunk });
+  // Конвертируем выбранную модель в реальную модель OpenAI
+  const actualModel = getActualModel(selectedModel);
+  const modelParams = getModelParams(selectedModel);
+  console.log('sendChatMessage called with:', { messagesCount: messages.length, selectedModel, actualModel, modelParams, hasOnChunk: !!onChunk });
+
+  // Проверяем, является ли запрос очень простым
+  const userMessage = messages[messages.length - 1];
+  if (userMessage && userMessage.role === 'user') {
+    const lowerQuery = userMessage.content.toLowerCase().trim();
+
+    const isVerySimpleQuery = ['привет', 'hi', 'hello', 'здравствуй', 'здравствуйте', 'спасибо', 'благодарю', 'пока', 'до свидания', 'прощай', 'да', 'нет', 'ага', 'угу', 'хорошо', 'плохо', 'нормально', 'ок', 'окей', 'ладно', 'понятно', 'ясно', 'понял', 'хорошо'].some(simple =>
+      lowerQuery === simple ||
+      lowerQuery.startsWith(simple + ' ') ||
+      lowerQuery.endsWith(' ' + simple) ||
+      lowerQuery.includes(' ' + simple + ' ')
+    );
+
+    const isTooShort = lowerQuery.length < 3;
+    const isOnlyEmojis = /^[\p{Emoji}\s]+$/u.test(lowerQuery);
+
+    if (isVerySimpleQuery || isTooShort || isOnlyEmojis) {
+      console.log('Simple query detected, returning direct response without search or planning');
+      // Возвращаем простой ответ без поиска и планирования
+      const simpleResponse = await getSimpleResponse(userMessage.content);
+      return simpleResponse;
+    }
+  }
+
   try {
     // Проверяем доступность API
     console.log('Checking API availability...');
@@ -367,14 +627,20 @@ export const sendChatMessage = async (
       let searchResults = '';
 
       // Проверяем тип запроса для генерации плана
-      const isSimpleQuery = ['привет', 'здравствуй', 'спасибо', 'пока', 'до свидания', 'да', 'нет', 'хорошо', 'плохо', 'нормально', 'ок', 'окей', 'ладно', 'понятно', 'ясно'].some(simple =>
+      const isVerySimpleQuery = ['привет', 'hi', 'hello', 'здравствуй', 'здравствуйте', 'спасибо', 'благодарю', 'пока', 'до свидания', 'прощай', 'да', 'нет', 'ага', 'угу', 'хорошо', 'плохо', 'нормально', 'ок', 'окей', 'ладно', 'понятно', 'ясно', 'понял', 'хорошо'].some(simple =>
         lowerQuery.trim() === simple ||
         lowerQuery.trim().startsWith(simple + ' ') ||
         lowerQuery.trim().endsWith(' ' + simple) ||
         lowerQuery.trim().includes(' ' + simple + ' ')
       );
 
-      // Генерируем план только для реальных задач и проектов (не для обычных разговоров)
+      // Очень короткие запросы никогда не требуют поиска или планирования
+      const isTooShort = lowerQuery.trim().length < 3;
+      const isOnlyEmojis = /^[\p{Emoji}\s]+$/u.test(lowerQuery.trim());
+
+      const isSimpleQuery = isVerySimpleQuery || isTooShort || isOnlyEmojis;
+
+      // Генерируем план для комплексных задач и запросов
       const shouldGeneratePlan = !isSimpleQuery && (
         // Явные запросы на планирование
         lowerQuery.includes('план') ||
@@ -383,14 +649,36 @@ export const sendChatMessage = async (
         lowerQuery.includes('проект') ||
         lowerQuery.includes('задач') ||
         lowerQuery.includes('шаг') ||
+        lowerQuery.includes('анализ') ||
+        lowerQuery.includes('исследов') ||
+        lowerQuery.includes('подготов') ||
+        lowerQuery.includes('организ') ||
         // Многоэтапные инструкции
-        (lowerQuery.split(/[.!?]/).length > 2) ||
+        (lowerQuery.split(/[.!?]/).length > 1) ||
         // Длинные запросы с множественными действиями
-        (lowerQuery.length > 150 && lowerQuery.split(' ').length > 20)
+        (lowerQuery.length > 100 && lowerQuery.split(' ').length > 15) ||
+        // Запросы с числами и списками
+        /\d+\./.test(lowerQuery) || // содержит нумерованные списки
+        lowerQuery.includes('во-первых') ||
+        lowerQuery.includes('во-вторых') ||
+        lowerQuery.includes('затем') ||
+        lowerQuery.includes('далее') ||
+        lowerQuery.includes('наконец') ||
+        // Бизнес и технические запросы
+        lowerQuery.includes('бизнес') ||
+        lowerQuery.includes('маркетинг') ||
+        lowerQuery.includes('финанс') ||
+        lowerQuery.includes('программирован') ||
+        lowerQuery.includes('дизайн') ||
+        lowerQuery.includes('управлен') ||
+        // Образовательные запросы
+        lowerQuery.includes('объясн') ||
+        lowerQuery.includes('научи') ||
+        lowerQuery.includes('покажи как')
       );
 
       if (shouldGeneratePlan) {
-        plan = await generateResponsePlan(userMessage.content, model);
+        plan = await generateResponsePlan(userMessage.content, selectedModel);
       }
 
       // Проверяем, требуется ли поиск в интернете
@@ -409,8 +697,11 @@ export const sendChatMessage = async (
         (lowerQuery.includes('числа') && lowerQuery.includes('диаграмм'))
       );
 
-      if (!isContentCreation || isVisualizationRequest) {
-        const needsWebSearch = requiresWebSearch(userMessage.content);
+      // Для запросов с планом ВСЕГДА нужен веб-поиск для получения актуальных данных
+      const shouldSearchForPlan = shouldGeneratePlan && plan.length > 0;
+
+      if ((!isContentCreation || isVisualizationRequest || shouldSearchForPlan) && internetEnabled !== false) {
+        const needsWebSearch = requiresWebSearch(userMessage.content) || shouldSearchForPlan;
 
         if (needsWebSearch) {
           console.log('Web search required for:', userMessage.content);
@@ -430,47 +721,151 @@ export const sendChatMessage = async (
         onPlanGenerated(plan);
       }
 
-      // Выполняем план поэтапно только если план не пустой
+      // Генерируем один структурированный ответ со всеми шагами
       if (plan.length > 0) {
-        for (let i = 0; i < plan.length; i++) {
-          const step = plan[i];
+        // НОВОЕ: Выполняем ПАРАЛЛЕЛЬНЫЙ поиск по всем запросам из плана
+        let allSearchResults: Map<string, string> = new Map();
 
-          if (onStepStart) {
-            onStepStart(i, step);
+        if (plan.some(step => step.searchQueries && step.searchQueries.length > 0) && internetEnabled !== false) {
+          console.log('🔍 Начинаем параллельный поиск в интернете...');
+          // Собираем все запросы для отображения прогресса
+          const allSearchQueries = plan.flatMap(step =>
+            step.searchQueries ? step.searchQueries.map(sq => sq.query) : []
+          );
+          if (onSearchProgress) {
+            onSearchProgress(allSearchQueries);
           }
+          allSearchResults = await executeParallelSearches(plan, onSearchProgress);
+          console.log(`✅ Параллельный поиск завершен: ${allSearchResults.size} результатов`);
+          // Очищаем прогресс после завершения
+          if (onSearchProgress) {
+            onSearchProgress([]);
+          }
+        }
 
-          // Генерируем контент для этого этапа
-          const searchContext = searchResults && searchResults !== '[NO_RESULTS_FOUND]' && !searchResults.includes('технической ошибки')
-            ? `Результаты поиска в интернете:\n${searchResults}\n\n`
-            : '';
+        // Форматируем результаты поиска по шагам
+        let formattedSearchContext = '';
+        if (allSearchResults.size > 0) {
+          formattedSearchContext = 'ДАННЫЕ ИЗ ИНТЕРНЕТА:\n\n';
+          
+          plan.forEach((step, stepIndex) => {
+            if (step.searchQueries && step.searchQueries.length > 0) {
+              formattedSearchContext += `📌 Шаг ${stepIndex + 1}: ${step.step}\n`;
+              
+              step.searchQueries.forEach((sq) => {
+                const key = `${sq.query}||[Шаг ${stepIndex + 1}: ${step.step}] ${sq.purpose}`;
+                const result = allSearchResults.get(key);
+                
+                if (result && result !== '[NO_RESULTS_FOUND]') {
+                  formattedSearchContext += `\n🔹 ${sq.purpose} (${sq.query}):\n${result}\n`;
+                }
+              });
+              
+              formattedSearchContext += '\n';
+            }
+          });
+        }
 
-          console.log('Plan step - searchContext:', searchContext ? 'HAS_CONTEXT' : 'NO_CONTEXT');
-          console.log('Plan step - searchResults:', searchResults);
-
-          // Для изоляции контекста используем только системное сообщение + текущее задание
           const systemMessage = messages.find(msg => msg.role === 'system') || {
             role: 'system' as const,
             content: 'Ты полезный AI-ассистент. Каждый чат является полностью независимым и изолированным. Не используй информацию или контекст из других разговоров. Отвечай только на основе предоставленных сообщений в текущем чате.'
           };
-          const stepMessages = [
+
+        // Форматируем план для промпта
+        const planDescription = plan.map((step, idx) => 
+          `${idx + 1}. **${step.step}**: ${step.description}`
+        ).join('\n\n');
+
+        const planPrompt = [
             systemMessage,
             {
               role: 'user' as const,
-              content: `${searchContext}Выполни этап плана "${step.step}": ${step.description}. Предыдущий контекст выполнения плана: ${fullResponse}`
-            }
-          ];
+            content: `${formattedSearchContext}
+ПЛАН РЕШЕНИЯ:
 
-          const stepResponse = await executePlanStep(stepMessages, model, (chunk) => {
-            if (onChunk) {
-              onChunk(chunk);
-            }
-          });
+${planDescription}
 
-          fullResponse += stepResponse + '\n\n';
+ИНСТРУКЦИИ:
+- КРИТИЧНО: ИСПОЛЬЗУЙ ТОЛЬКО ДАННЫЕ ЗА 2024-2025 ГОДЫ! ЗАПРЕЩЕНО УПОМИНАТЬ 2023 ГОД И РАНЬШЕ!
+- ИСПОЛЬЗУЙ ДАННЫЕ ИЗ ИНТЕРНЕТА для каждого пункта плана
+- ВЫПОЛНИ ВСЮ РАБОТУ САМ - создай один структурированный профессиональный ответ
+- Раздели ответ по пунктам плана (используй форматирование Markdown)
+- Для каждого пункта:
+  * Используй РЕАЛЬНЫЕ ДАННЫЕ из поиска 2024-2025 годов
+  * Приводи конкретные цифры, статистику, факты за 2024-2025
+  * Делай обоснованные выводы на основе свежих данных
+  * Связывай информацию между пунктами
+- Стиль: пиши как профессиональный эксперт/консультант
+- РЕЗУЛЬТАТ должен быть готов к использованию - не давай советы, приводи выводы
+- Структурируй текст списками, подзаголовками, форматированием
+- Каждый пункт должен быть ДЕТАЛЬНЫМ и КОНКРЕТНЫМ
 
-          // Отмечаем этап как завершенный
-          plan[i].completed = true;
+Исходный запрос: "${userMessage.content}"
+
+СОЗДАЙ ПРОФЕССИОНАЛЬНЫЙ СТРУКТУРИРОВАННЫЙ ОТВЕТ НА ОСНОВЕ СОБРАННЫХ ДАННЫХ:`
+          }
+        ];
+
+        const response = await fetch(`${API_BASE_URL}/chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messages: planPrompt.map(msg => ({
+              role: msg.role,
+              content: msg.content,
+            })),
+            model: actualModel,
+            stream: true,
+            ...modelParams,
+          }),
+          signal: abortSignal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
         }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const data = line.slice(6);
+                if (data === '[DONE]') continue;
+
+                try {
+                  const parsed = JSON.parse(data);
+                  const content = parsed.choices[0]?.delta?.content;
+                  if (content) {
+                    fullResponse += content;
+                    if (onChunk) {
+                      onChunk(content);
+                    }
+                  }
+                } catch (e) {
+                  // Игнорируем невалидный JSON
+                }
+              }
+            }
+          }
+        } finally {
+          reader.releaseLock();
+        }
+
+        // Отмечаем все шаги как завершенные (они уже обработаны в одном ответе)
+        plan.forEach((step) => {
+          step.completed = true;
+        });
       } else {
         // Обычный ответ без плана (для простых запросов)
         const searchContext = searchResults && searchResults !== '[NO_RESULTS_FOUND]' && !searchResults.includes('технической ошибки')
@@ -499,7 +894,7 @@ export const sendChatMessage = async (
         console.log('Making fetch request to:', `${API_BASE_URL}/chat`);
         console.log('Request payload:', {
           messagesCount: enhancedMessages.length,
-          model,
+          model: actualModel,
           stream: true
         });
 
@@ -513,9 +908,11 @@ export const sendChatMessage = async (
               role: msg.role,
               content: msg.content,
             })),
-            model,
+            model: actualModel,
             stream: true,
+            ...modelParams,
           }),
+          signal: abortSignal,
         });
 
         console.log('Fetch response status:', response.status, response.statusText);
@@ -572,8 +969,9 @@ export const sendChatMessage = async (
             role: msg.role,
             content: msg.content,
           })),
-          model,
+          model: actualModel,
           stream: true,
+          ...modelParams,
         }),
       });
 
@@ -625,40 +1023,86 @@ export const sendChatMessage = async (
 };
 
 // Генерация плана ответа
-const generateResponsePlan = async (userQuestion: string, model: string): Promise<PlanStep[]> => {
+const generateResponsePlan = async (userQuestion: string, selectedModel: string): Promise<PlanStep[]> => {
   // Проверяем доступность API
   if (!isApiAvailable()) {
     return []; // Возвращаем пустой план при недоступности API
   }
 
-  const planPrompt = `
-ВЫПОЛНИ задачу пользователя напрямую. НЕ предлагай варианты - ДЕЙСТВУЙ!
+  const actualModel = getActualModel(selectedModel);
+  const modelParams = getModelParams(selectedModel);
 
-Задача: "${userQuestion}"
+  const planPrompt = `
+СОЗДАЙ ПЛАН С УКАЗАНИЕМ ПОИСКОВЫХ ЗАПРОСОВ ДЛЯ ИНТЕРНЕТА
+
+КРИТИЧНО ВАЖНО: СЕЙЧАС 2025 ГОД! ТЕКУЩИЙ ГОД - 2025!
+ОБЯЗАТЕЛЬНО ИСПОЛЬЗУЙ ТОЛЬКО ДАННЫЕ ЗА 2024-2025 ГОДЫ!
+ЗАПРЕЩЕНО ИСПОЛЬЗОВАТЬ ДАННЫЕ ИЗ 2023 ГОДА И РАНЬШЕ!
+ВСЕ ПОИСКОВЫЕ ЗАПРОСЫ ДОЛЖНЫ СОДЕРЖАТЬ "2025" ИЛИ "2024"!
+
+ЗАПРОС ПОЛЬЗОВАТЕЛЯ: "${userQuestion}"
 
 ИНСТРУКЦИИ:
-1. РАЗБЕРИСЬ в задаче и ВЫПОЛНИ её
-2. ЕСЛИ нужно искать информацию - найди конкретные данные
-3. ЕСЛИ нужно анализировать - проведи анализ
-4. ЕСЛИ нужно планировать - создай план действий
-5. ЕСЛИ нужно создавать - создай результат
+1. РАЗБЕРИСЬ в задаче - что нужно СОЗДАТЬ/ВЫПОЛНИТЬ
+2. РАЗДЕЛИ на 3-7 шагов, каждый с РЕЗУЛЬТАТОМ
+3. ДЛЯ КАЖДОГО ШАГА укажи ЧТО НУЖНО НАЙТИ В ИНТЕРНЕТЕ:
+   - searchQueries: массив поисковых запросов
+   - Для высокого приоритета (high) - критичные данные для этого шага
+   - Для среднего (medium) - дополнительные данные
+   - Для низкого (low) - опциональные данные
 
-СОЗДАЙ ПЛАН ВЫПОЛНЕНИЯ:
-- Раздели задачу на практические шаги
-- Каждый шаг должен быть выполнимым
-- Укажи что именно делать на каждом этапе
-- Используй реальные данные, не плейсхолдеры
+ТИПЫ ПОИСКОВ ПО ШАГАМ:
+• Для бизнес-плана: статистика рынка, конкуренты, цены, тренды, спрос
+• Для анализа: свежие данные, статистика, отчёты, тренды
+• Для технологий: новые решения, технологии, бенчмарки, рекомендации
+• Для финансов: курсы, процентные ставки, цены, анализ
 
-ФОРМАТ ОТВЕТА - JSON массив:
+ПРАВИЛА:
+- Шаги идут в логической последовательности
+- КАЖДЫЙ ШАГ производит результат
+- Поиск помогает получить АКТУАЛЬНЫЕ ДАННЫЕ для каждого шага
+- searchQueries содержит конкретные поисковые фразы
+- ОБЯЗАТЕЛЬНО: ВСЕ ПОИСКОВЫЕ ЗАПРОСЫ ДОЛЖНЫ ЗАКАНЧИВАТЬСЯ НА "2025 ГОД" ИЛИ "2025"
+- СТРОГО ЗАПРЕЩЕНО: НЕ ДОБАВЛЯТЬ ГОД 2023 ИЛИ РАНЬШЕ!
+- ТОЛЬКО 2024-2025 ГОДЫ В ВСЕХ ЗАПРОСАХ!
+
+ФОРМАТ ОТВЕТА - ТОЛЬКО JSON:
 [
   {
-    "step": "Название шага",
-    "description": "Что конкретно делать на этом шаге",
+    "step": "Анализ рынка",
+    "description": "Исследовать текущее состояние рынка с актуальными данными",
+    "searchQueries": [
+      {
+        "query": "рынок кофеен в России 2025 год статистика",
+        "priority": "high",
+        "purpose": "Размер и динамика рынка 2025"
+      },
+      {
+        "query": "конкуренты кофеен Москва 2025 анализ",
+        "priority": "high",
+        "purpose": "Анализ конкурентов 2025"
+      },
+      {
+        "query": "тренды кофейного рынка 2025 год",
+        "priority": "medium",
+        "purpose": "Текущие тренды 2025"
+      }
+    ],
+    "completed": false
+  },
+  {
+    "step": "Финансовое планирование",
+    "description": "Составить финансовый прогноз на основе актуальных данных",
+    "searchQueries": [
+      {
+        "query": "средняя прибыль кофейни 2025 год",
+        "priority": "high",
+        "purpose": "Финансовые показатели"
+      }
+    ],
     "completed": false
   }
 ]
-
-НЕ ПРЕДЛАГАЙ ВАРИАНТЫ - ВЫПОЛНЯЙ ЗАДАЧУ!
 `;
 
   const response = await fetch(`${API_BASE_URL}/chat`, {
@@ -671,7 +1115,7 @@ const generateResponsePlan = async (userQuestion: string, model: string): Promis
         { role: 'system', content: 'Ты - помощник, который создает планы ответов. Всегда отвечай только в формате JSON.' },
         { role: 'user', content: planPrompt }
       ],
-      model,
+      model: actualModel,
       stream: false,
     }),
   });
@@ -743,9 +1187,13 @@ const generateResponsePlan = async (userQuestion: string, model: string): Promis
 // Выполнение одного этапа плана
 const executePlanStep = async (
   messages: Message[],
-  model: string,
+  selectedModel: string,
   onChunk?: (chunk: string) => void
 ): Promise<string> => {
+  // Конвертируем выбранную модель в реальную модель OpenAI
+  const actualModel = getActualModel(selectedModel);
+  const modelParams = getModelParams(selectedModel);
+
   const stepMessage = messages[messages.length - 1];
   const stepContent = stepMessage.content.toLowerCase();
 
@@ -862,8 +1310,9 @@ ${searchContext}
           ...messages.slice(0, -1),
           { role: 'user', content: visualizationPrompt }
         ],
-        model,
+          model: actualModel,
         stream: false,
+          ...modelParams,
       }),
     });
 
@@ -927,7 +1376,7 @@ ${searchContext}
       },
       body: JSON.stringify({
         messages: stepMessages,
-        model,
+        model: actualModel,
         stream: true,
       }),
     });

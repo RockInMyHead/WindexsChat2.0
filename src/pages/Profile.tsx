@@ -4,17 +4,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { ArrowLeft, User, Mail, Key, Crown, CreditCard, Calendar, Check } from "lucide-react";
+import { ArrowLeft, User, Mail, Key, Crown, CreditCard, Calendar, Check, LogOut } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 
 const Profile = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
 
   // Состояние для модальных окон
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showPaymentsHistoryModal, setShowPaymentsHistoryModal] = useState(false);
+  const [selectedPlanForPayment, setSelectedPlanForPayment] = useState<string | null>(null);
 
   // Состояние профиля пользователя
   const [userProfile, setUserProfile] = useState({
@@ -34,11 +36,11 @@ const Profile = () => {
 
   // Данные подписки
   const currentPlan = {
-    name: "WindexsAI Pro",
+    name: "WindexsAI Lite",
     status: "Активна",
-    description: "Полный доступ ко всем функциям и моделям",
-    price: "₽999/месяц",
-    nextBilling: "15 декабря 2025"
+    description: "Базовые функции и модель GPT-4o-mini",
+    price: "Бесплатно",
+    nextBilling: null
   };
 
   // История платежей (демо данные)
@@ -46,21 +48,21 @@ const Profile = () => {
     {
       id: 1,
       date: "15 ноября 2025",
-      amount: "₽999",
+      amount: "₽399",
       status: "Оплачено",
       method: "Карта **** 4242"
     },
     {
       id: 2,
       date: "15 октября 2025",
-      amount: "₽999",
+      amount: "₽399",
       status: "Оплачено",
       method: "Карта **** 4242"
     },
     {
       id: 3,
       date: "15 сентября 2025",
-      amount: "₽999",
+      amount: "₽399",
       status: "Оплачено",
       method: "Карта **** 4242"
     }
@@ -77,11 +79,18 @@ const Profile = () => {
   };
 
   const handleViewPayments = () => {
-    setShowPaymentModal(true);
+    setShowPaymentsHistoryModal(true);
   };
 
   const handleChangePassword = () => {
     alert("Функция изменения пароля будет доступна в ближайшее время");
+  };
+
+  const handleLogout = () => {
+    if (confirm("Вы уверены, что хотите выйти из аккаунта?")) {
+      logout();
+      navigate("/");
+    }
   };
 
   const handleDeleteAccount = () => {
@@ -91,8 +100,25 @@ const Profile = () => {
   };
 
   const handlePlanChange = (newPlan: string) => {
-    alert(`План изменен на: ${newPlan}. Функция будет реализована в ближайшее время.`);
-    setShowPlanModal(false);
+    if (newPlan === "WindexsAI Lite") {
+      // Бесплатный план - просто подтверждаем
+      alert(`План успешно изменен на: ${newPlan}`);
+      setShowPlanModal(false);
+      // Здесь можно добавить логику обновления плана в базе данных
+    } else if (newPlan === "WindexsAI Pro") {
+      // Платный план - открываем платежное окно
+      setSelectedPlanForPayment(newPlan);
+      setShowPlanModal(false);
+      setShowPaymentModal(true);
+    }
+  };
+
+  const handlePayment = () => {
+    // Имитация платежа через ЮKassa (тестовые данные)
+    alert(`Платеж за план "${selectedPlanForPayment}" успешно обработан через ЮKassa!\n\nТестовые данные:\n- Сумма: ₽399\n- Метод: Тестовая карта\n- Статус: Оплачено\n\nПлан активирован!`);
+    setShowPaymentModal(false);
+    setSelectedPlanForPayment(null);
+    // Здесь можно добавить логику обновления плана в базе данных
   };
 
   return (
@@ -211,6 +237,14 @@ const Profile = () => {
             >
               Изменить пароль
             </Button>
+            <Button
+              variant="outline"
+              onClick={handleLogout}
+              className="w-full"
+            >
+              <LogOut className="h-4 w-4 mr-2" />
+              Выйти из аккаунта
+            </Button>
             <div className="pt-4 border-t border-border">
               <Button
                 variant="destructive"
@@ -236,17 +270,17 @@ const Profile = () => {
             </DialogHeader>
             <div className="space-y-4">
               {/* Текущий план */}
-              <div className="p-4 bg-primary/10 rounded-lg border border-primary/20">
+              <div className="p-4 bg-green-50 dark:bg-green-950/20 rounded-lg border border-green-200 dark:border-green-800">
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-semibold text-foreground">{currentPlan.name}</h4>
-                  <span className="text-sm bg-primary text-primary-foreground px-2 py-1 rounded-full">
-                    Текущий
+                  <span className="text-sm bg-green-600 text-white px-2 py-1 rounded-full">
+                    Текущий план
                   </span>
                 </div>
                 <p className="text-sm text-muted-foreground">
                   {currentPlan.description}
                 </p>
-                <p className="text-sm font-medium text-primary mt-1">
+                <p className="text-sm font-medium text-green-600 dark:text-green-400 mt-1">
                   {currentPlan.price}
                 </p>
               </div>
@@ -255,41 +289,42 @@ const Profile = () => {
               <div className="space-y-3">
                 <h4 className="font-medium text-foreground">Доступные планы:</h4>
 
-                <div className="p-4 border border-border rounded-lg hover:border-primary/50 cursor-pointer transition-colors">
+                <div className="p-4 border-2 border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/20 rounded-lg">
                   <div className="flex items-center justify-between mb-2">
                     <h5 className="font-semibold">WindexsAI Lite</h5>
-                    <span className="text-sm text-muted-foreground">₽499/месяц</span>
+                    <span className="text-sm text-green-600 dark:text-green-400 font-medium">Бесплатно</span>
                   </div>
                   <p className="text-sm text-muted-foreground mb-3">
-                    Базовые функции и модель GPT-3.5
+                    Базовые функции и модель GPT-4o-mini
                   </p>
                   <Button
                     size="sm"
                     variant="outline"
                     className="w-full"
                     onClick={() => handlePlanChange("WindexsAI Lite")}
+                    disabled={true}
                   >
-                    Выбрать
+                    <Check className="h-4 w-4 mr-2" />
+                    Текущий план
                   </Button>
                 </div>
 
                 <div className="p-4 border border-border rounded-lg hover:border-primary/50 cursor-pointer transition-colors">
                   <div className="flex items-center justify-between mb-2">
                     <h5 className="font-semibold">WindexsAI Pro</h5>
-                    <span className="text-sm text-muted-foreground">₽999/месяц</span>
+                    <span className="text-sm text-muted-foreground">₽399/месяц</span>
                   </div>
                   <p className="text-sm text-muted-foreground mb-3">
                     Полный доступ ко всем функциям и моделям GPT-4
                   </p>
                   <Button
                     size="sm"
-                    variant="outline"
-                    className="w-full"
+                    variant="default"
+                    className="w-full bg-primary hover:bg-primary/90"
                     onClick={() => handlePlanChange("WindexsAI Pro")}
-                    disabled={true}
                   >
-                    <Check className="h-4 w-4 mr-2" />
-                    Текущий план
+                    <Crown className="h-4 w-4 mr-2" />
+                    Выбрать Pro
                   </Button>
                 </div>
               </div>
@@ -297,8 +332,107 @@ const Profile = () => {
           </DialogContent>
         </Dialog>
 
-        {/* Модальное окно истории платежей */}
+        {/* Модальное окно оплаты через ЮKassa */}
         <Dialog open={showPaymentModal} onOpenChange={setShowPaymentModal}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <CreditCard className="h-5 w-5 text-primary" />
+                Оплата подписки
+              </DialogTitle>
+              <DialogDescription>
+                Оплата через ЮKassa (тестовый режим)
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="p-4 bg-muted/50 rounded-lg">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="font-medium">План:</span>
+                  <span>{selectedPlanForPayment}</span>
+                </div>
+                <div className="flex justify-between items-center mb-2">
+                  <span className="font-medium">Период:</span>
+                  <span>1 месяц</span>
+                </div>
+                <div className="flex justify-between items-center text-lg font-semibold">
+                  <span>Итого:</span>
+                  <span className="text-primary">₽399</span>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <Label htmlFor="card-number">Номер карты</Label>
+                  <Input
+                    id="card-number"
+                    placeholder="4242 4242 4242 4242"
+                    defaultValue="4242 4242 4242 4242"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Тестовая карта ЮKassa
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="expiry">Срок действия</Label>
+                    <Input
+                      id="expiry"
+                      placeholder="12/25"
+                      defaultValue="12/25"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="cvv">CVV</Label>
+                    <Input
+                      id="cvv"
+                      placeholder="123"
+                      defaultValue="123"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <Label htmlFor="email">Email для чека</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="email@example.com"
+                    value={userProfile.email}
+                    onChange={(e) => setUserProfile(prev => ({ ...prev, email: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-4">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowPaymentModal(false);
+                    setSelectedPlanForPayment(null);
+                  }}
+                  className="flex-1"
+                >
+                  Отмена
+                </Button>
+                <Button
+                  onClick={handlePayment}
+                  className="flex-1 bg-primary hover:bg-primary/90"
+                >
+                  <CreditCard className="h-4 w-4 mr-2" />
+                  Оплатить ₽399
+                </Button>
+              </div>
+
+              <p className="text-xs text-muted-foreground text-center">
+                🔒 Безопасная оплата через ЮKassa. Тестовый режим.
+              </p>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Модальное окно истории платежей */}
+        <Dialog open={showPaymentsHistoryModal} onOpenChange={setShowPaymentsHistoryModal}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">

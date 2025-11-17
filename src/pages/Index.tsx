@@ -8,14 +8,16 @@ import { useAuth } from "@/contexts/AuthContext";
 
 const Index = () => {
   const navigate = useNavigate();
-  const { isAuthenticated, user, setShowAuthModal, logout, setPendingMessage } = useAuth();
+  const { isAuthenticated, user, setShowAuthModal, logout, setPendingMessage, setInitialChatMessage } = useAuth();
   const [input, setInput] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (input.trim()) {
       if (isAuthenticated) {
-        navigate("/chat", { state: { initialMessage: input } });
+        // Для авторизованных пользователей устанавливаем initialChatMessage напрямую
+        setInitialChatMessage(input.trim());
+        navigate("/chat");
       } else {
         // Сохраняем сообщение для отправки после авторизации
         setPendingMessage(input.trim());

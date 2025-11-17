@@ -1,4 +1,5 @@
-export const API_BASE_URL = 'https://ai.windexs.ru/api';
+// Use relative path for API - works on any domain
+export const API_BASE_URL = '/api';
 
 export interface Message {
   id?: number;

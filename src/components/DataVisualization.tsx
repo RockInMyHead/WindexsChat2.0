@@ -227,7 +227,7 @@ export const generateSampleData = (type: string): ChartData[] => {
         { name: '2021', value: 120 },
         { name: '2022', value: 150 },
         { name: '2023', value: 180 },
-        { name: '2024', value: 220 },
+        { name: '2025', value: 220 },
       ];
 
     default:

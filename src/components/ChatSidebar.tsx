@@ -61,6 +61,8 @@ export function ChatSidebar({ onSelectChat, currentSessionId, refreshTrigger, on
   };
 
   const handleDeleteChat = async (sessionId: number, sessionTitle: string) => {
+    console.log('Attempting to delete chat:', sessionId, sessionTitle);
+
     if (currentSessionId === sessionId) {
       alert('Нельзя удалить активный чат. Сначала переключитесь на другой чат.');
       return;
@@ -71,14 +73,25 @@ export function ChatSidebar({ onSelectChat, currentSessionId, refreshTrigger, on
       return;
     }
 
+    if (!confirm(`Удалить чат "${sessionTitle}"?`)) {
+      return;
+    }
+
     try {
-      await apiClient.deleteSession(sessionId);
+      console.log('Calling apiClient.deleteSession for sessionId:', sessionId);
+      const result = await apiClient.deleteSession(sessionId);
+      console.log('Delete result:', result);
+
       const updatedSessions = await apiClient.getAllSessions();
+      console.log('Updated sessions after delete:', updatedSessions);
+
       setChatSessions(updatedSessions);
       if (onChatDeleted) onChatDeleted();
+
+      console.log('Chat deleted successfully');
     } catch (error) {
       console.error('Error deleting chat session:', error);
-      alert('Ошибка при удалении чата');
+      alert(`Ошибка при удалении чата: ${error.message || 'Неизвестная ошибка'}`);
     }
   };
 
@@ -141,18 +154,20 @@ export function ChatSidebar({ onSelectChat, currentSessionId, refreshTrigger, on
                         )}
                       </SidebarMenuButton>
 
-                      {!collapsed && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteChat(session.id!, session.title);
-                          }}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all duration-200"
-                          title="Удалить чат"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      )}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteChat(session.id!, session.title);
+                        }}
+                        className={`${
+                          collapsed
+                            ? 'absolute -right-1 top-1/2 -translate-y-1/2 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all duration-200'
+                            : 'absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all duration-200'
+                        }`}
+                        title="Удалить чат"
+                      >
+                        <Trash2 className={`${collapsed ? 'h-3 w-3' : 'h-3 w-3'}`} />
+                      </button>
                     </div>
                   </SidebarMenuItem>
                 ))

@@ -1,6 +1,53 @@
+/* KaTeX CSS */
+@import 'katex/dist/katex.min.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Кастомные стили для KaTeX (темная тема) */
+.katex {
+  font-size: 1.1em;
+}
+
+.katex-display {
+  margin: 1rem 0;
+  text-align: center;
+}
+
+.katex-display .katex {
+  font-size: 1.2em;
+}
+
+.katex .base {
+  color: hsl(var(--foreground));
+}
+
+.katex .strut {
+  display: inline-block;
+}
+
+.katex .frac-line {
+  border-bottom-style: solid;
+  border-bottom-width: 0.04em;
+  border-bottom-color: hsl(var(--foreground));
+}
+
+.katex .sizing.reset-size1.frac-line {
+  border-bottom-width: 0.04em;
+}
+
+.katex .sizing.reset-size2.frac-line {
+  border-bottom-width: 0.04em;
+}
+
+.katex .sizing.reset-size3.frac-line {
+  border-bottom-width: 0.04em;
+}
+
+.katex .sizing.reset-size4.frac-line {
+  border-bottom-width: 0.04em;
+}
 
 /* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
 All colors MUST be HSL.

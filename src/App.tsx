@@ -17,7 +17,7 @@ const queryClient = new QueryClient();
 // Основной компонент приложения
 const AppContent = () => {
   const navigate = useNavigate();
-  const { showAuthModal, setShowAuthModal, login, pendingMessage, setInitialChatMessage } = useAuth();
+  const { showAuthModal, setShowAuthModal, login, pendingMessage, setInitialChatMessage, setPendingMessage } = useAuth();
 
   const handleAuthSuccess = (user: { id: string; name: string; email: string }, initialMessage?: string) => {
     login(user);
@@ -27,6 +27,8 @@ const AppContent = () => {
     const messageToSend = initialMessage || pendingMessage;
     if (messageToSend) {
       setInitialChatMessage(messageToSend);
+      // Очищаем pendingMessage после использования
+      setPendingMessage(null);
       // Переходим в чат
       setTimeout(() => {
         navigate("/chat");

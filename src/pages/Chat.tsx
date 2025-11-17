@@ -95,6 +95,22 @@ const Chat = () => {
   const [responsePlan, setResponsePlan] = useState<PlanStep[]>([]);
   const [currentStep, setCurrentStep] = useState<number>(-1);
   const [isPlanning, setIsPlanning] = useState(false);
+  const [searchProgress, setSearchProgress] = useState<string[]>([]);
+  const [internetEnabled, setInternetEnabled] = useState<boolean>(() => {
+    // Загружаем настройку из localStorage
+    const saved = localStorage.getItem('windexsai-internet-enabled');
+    return saved !== null ? JSON.parse(saved) : true; // По умолчанию включено
+  });
+
+  // AbortController для прерывания запросов
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Функция для переключения интернет-поиска
+  const handleToggleInternet = () => {
+    const newValue = !internetEnabled;
+    setInternetEnabled(newValue);
+    localStorage.setItem('windexsai-internet-enabled', JSON.stringify(newValue));
+  };
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -106,30 +122,42 @@ const Chat = () => {
   useEffect(() => {
     const initializeSession = async () => {
       console.log('initializeSession called, currentSessionId:', currentSessionId);
-      if (!currentSessionId) {
-        try {
-          console.log('Creating new session...');
-          // Создаем новую сессию чата
-          const { sessionId } = await apiClient.createSession("Новый чат");
-          console.log('Session created with ID:', sessionId);
-          setCurrentSessionId(sessionId);
 
-          // Загружаем сообщения сессии (если есть)
-          const savedMessages = await apiClient.getMessages(sessionId);
-          if (savedMessages.length > 0) {
-            setMessages(savedMessages);
-          } else {
-            // Если нет сохраненных сообщений, проверяем initialMessage из контекста или location.state
-            const initialMessage = initialChatMessage || location.state?.initialMessage;
-            if (initialMessage && !initialMessageSentRef.current) {
-              initialMessageSentRef.current = true;
-              // Очищаем initialChatMessage после использования
+      // Проверяем, есть ли initialMessage
+      const initialMessage = initialChatMessage || location.state?.initialMessage;
+
+      if (!currentSessionId || initialMessage) {
+        try {
+          // Если есть initialMessage, всегда создаем новый чат
+          if (initialMessage) {
+            console.log('Creating new session for initial message...');
+            // Создаем новую сессию с заголовком на основе первого сообщения
+            const title = initialMessage.length > 50 ? initialMessage.substring(0, 47) + "..." : initialMessage;
+            const { sessionId } = await apiClient.createSession(title);
+            console.log('Session created with ID:', sessionId, 'title:', title);
+            setCurrentSessionId(sessionId);
+
+            // Отправляем initialMessage как первое сообщение
+            setTimeout(() => {
+              sendMessage(initialMessage);
+              // Очищаем initialMessage после использования
               setInitialChatMessage(null);
-              // Небольшая задержка для обеспечения корректной инициализации
-              setTimeout(() => {
-                sendMessage(initialMessage);
-              }, 100);
-            }
+              // Также очищаем location.state если он был использован
+              if (window.history.replaceState) {
+                window.history.replaceState({}, document.title, window.location.pathname);
+              }
+            }, 100);
+          } else if (!currentSessionId) {
+            console.log('Creating new empty session...');
+            // Создаем новую пустую сессию
+            const { sessionId } = await apiClient.createSession("Новый чат");
+            console.log('Session created with ID:', sessionId);
+            setCurrentSessionId(sessionId);
+          } else {
+            // Загружаем существующие сообщения
+            console.log('Loading existing session messages...');
+            const savedMessages = await apiClient.getMessages(currentSessionId);
+            setMessages(savedMessages);
           }
         } catch (error) {
           console.error('Error initializing session:', error);
@@ -138,21 +166,8 @@ const Chat = () => {
     };
 
     initializeSession();
-  }, [currentSessionId]);
+  }, [currentSessionId, initialChatMessage, location.state?.initialMessage]);
 
-  // Также проверяем initialMessage при изменении initialChatMessage или location.state
-  useEffect(() => {
-    const initialMessage = initialChatMessage || location.state?.initialMessage;
-    if (initialMessage && messages.length === 0 && currentSessionId && !initialMessageSentRef.current) {
-      initialMessageSentRef.current = true;
-      // Очищаем initialChatMessage после использования
-      if (initialChatMessage) {
-        setInitialChatMessage(null);
-      }
-      sendMessage(initialMessage);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialChatMessage, location.state?.initialMessage, messages.length, currentSessionId]);
 
   // Прокрутка при добавлении новых сообщений (только если пользователь не прокручивает)
   useEffect(() => {
@@ -243,13 +258,22 @@ const Chat = () => {
     // Сохраняем сообщение пользователя в базу данных
     console.log('Saving user message to database...');
     await apiClient.saveMessage(currentSessionId, "user", messageText);
+
+    // Если это первое сообщение пользователя в чате, генерируем заголовок
+    if (messages.length === 0 && currentSessionId) {
+      await generateChatTitle(messageText, currentSessionId);
+    }
+
     console.log('Message saved, calling sendChatMessage...');
 
     try {
+      // Создаем новый AbortController для этого запроса
+      abortControllerRef.current = new AbortController();
+
       let assistantContent = "";
       let hasStartedAssistantMessage = false;
 
-      console.log('About to call sendChatMessage with messages:', allMessages.length);
+      console.log('About to call sendChatMessage with messages:', allMessages.length, 'selectedModel:', selectedModel);
       await sendChatMessage(
         allMessages,
         selectedModel,
@@ -284,41 +308,59 @@ const Chat = () => {
         (stepIndex: number, step: PlanStep) => {
           setCurrentStep(stepIndex);
           setIsPlanning(false);
-        }
+        },
+        // Колбэк для прогресса поиска
+        (queries: string[]) => {
+          setSearchProgress(queries);
+        },
+        // Настройка интернет-поиска
+        internetEnabled,
+        // AbortSignal для прерывания запроса
+        abortControllerRef.current?.signal
       );
 
       // Сохраняем ответ ассистента в базу данных
       if (assistantContent) {
         await apiClient.saveMessage(currentSessionId, "assistant", assistantContent);
-
-        // Если это первый ответ ассистента, генерируем заголовок чата
-        if (messages.length === 1 && currentSessionId) { // messages.length === 1 означает, что до этого было только сообщение пользователя
-          await generateChatTitle(messageText, currentSessionId);
-        }
       }
+
+      // Сбрасываем состояния плана после завершения ответа
+      setResponsePlan([]);
+      setCurrentStep(-1);
+      setIsPlanning(false);
+      setSearchProgress([]);
     } catch (error) {
-      console.error("Error in sendMessage:", error);
-      console.log("Error details:", error.message, error.stack);
-      const errorMessage = "Извините, произошла ошибка. Пожалуйста, попробуйте снова.";
+      // Проверяем, было ли прервано выполнение
+      if (error.name === 'AbortError') {
+        console.log('Request was aborted by user');
+        // Не показываем ошибку пользователю при прерывании
+      } else {
+        console.error("Error in sendMessage:", error);
+        console.log("Error details:", error.message, error.stack);
+        const errorMessage = "Извините, произошла ошибка. Пожалуйста, попробуйте снова.";
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: errorMessage,
-        },
-      ]);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: errorMessage,
+          },
+        ]);
 
-      // Сохраняем сообщение об ошибке в базу данных
-      await apiClient.saveMessage(currentSessionId, "assistant", errorMessage);
+        // Сохраняем сообщение об ошибке в базу данных
+        await apiClient.saveMessage(currentSessionId, "assistant", errorMessage);
+      }
 
       // Сбрасываем состояние плана при ошибке
       setResponsePlan([]);
       setCurrentStep(-1);
       setIsPlanning(false);
+      setSearchProgress([]);
     } finally {
       console.log("sendMessage finished, setting isLoading to false");
       setIsLoading(false);
+      // Сбрасываем AbortController
+      abortControllerRef.current = null;
     }
   };
 
@@ -453,15 +495,21 @@ const Chat = () => {
   };
 
   const handleNewChat = async () => {
-    if (isLoading) return; // Предотвращаем одновременные операции
-
     try {
+      // Прерываем текущий запрос, если он есть
+      if (abortControllerRef.current) {
+        console.log('Aborting current request...');
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+
       // Очищаем все состояние перед созданием нового чата
       setMessages([]);
       setResponsePlan([]);
       setCurrentStep(-1);
       setIsPlanning(false);
-      // НЕ очищаем initialMessageSentRef.current - это глобальный флаг за сессию
+      setSearchProgress([]);
+      setIsLoading(false); // Сбрасываем состояние загрузки
 
       // Создаем новую сессию
       const { sessionId: newSessionId } = await apiClient.createSession("Новый чат");
@@ -471,6 +519,8 @@ const Chat = () => {
       setSidebarRefreshTrigger(prev => prev + 1);
       // Очищаем input поле
       setInput("");
+
+      console.log('New chat created with sessionId:', newSessionId);
     } catch (error) {
       console.error('Error creating new chat:', error);
     }
@@ -500,13 +550,25 @@ const Chat = () => {
       // Генерируем заголовок на основе первого сообщения пользователя
       let title = userMessage.trim();
 
-      // Ограничиваем длину заголовка
-      if (title.length > 50) {
-        title = title.substring(0, 47) + "...";
+      // Убираем лишние пробелы и переносы строк
+      title = title.replace(/\s+/g, ' ');
+
+      // Ограничиваем длину заголовка (максимум 60 символов)
+      if (title.length > 60) {
+        // Ищем конец слова или предложения
+        let cutIndex = 57;
+        while (cutIndex > 40 && title[cutIndex] !== ' ' && title[cutIndex] !== '.' && title[cutIndex] !== '!' && title[cutIndex] !== '?') {
+          cutIndex--;
+        }
+        if (cutIndex > 40) {
+          title = title.substring(0, cutIndex) + "...";
+        } else {
+          title = title.substring(0, 57) + "...";
+        }
       }
 
       // Если сообщение слишком короткое, используем общий заголовок
-      if (title.length < 5) {
+      if (title.length < 3) {
         title = "Новый чат";
       }
 
@@ -533,7 +595,11 @@ const Chat = () => {
         />
 
         <div className="flex flex-col flex-1 h-screen">
-          <ChatHeader onNewChat={handleNewChat} />
+          <ChatHeader
+            onNewChat={handleNewChat}
+            internetEnabled={internetEnabled}
+            onToggleInternet={handleToggleInternet}
+          />
       
           <div className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-2 sm:px-4 py-4 sm:py-8">
@@ -549,55 +615,111 @@ const Chat = () => {
           )}
           
           {messages.map((message, index) => (
-            <ChatMessage key={index} message={message} />
+            <ChatMessage key={index} message={message} selectedModel={selectedModel} />
           ))}
+
+          {/* Прогресс поиска в интернете */}
+          {searchProgress.length > 0 && (
+            <div className="mb-4 p-4 bg-blue-50/80 border border-blue-200 rounded-lg animate-fade-in">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center">
+                  <span className="text-white text-xs">🔍</span>
+                </div>
+                <span className="text-sm font-medium text-blue-800">
+                  Поиск актуальной информации в интернете
+                </span>
+              </div>
+              <div className="space-y-1.5">
+                {searchProgress.map((query, index) => (
+                  <div key={index} className="flex items-center gap-2 text-xs text-blue-700">
+                    <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+                    <span className="truncate">"{query}"</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Индикатор отключенного интернета */}
+          {!internetEnabled && (
+            <div className="mb-4 p-3 bg-amber-50/80 border border-amber-200 rounded-lg animate-fade-in">
+              <div className="flex items-center gap-3">
+                <div className="w-5 h-5 rounded-full bg-amber-500 flex items-center justify-center">
+                  <span className="text-white text-xs">⚠️</span>
+                </div>
+                <span className="text-sm text-amber-800">
+                  Интернет-поиск отключен. AI отвечает только на основе своих знаний.
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* План выполнения ответа */}
           {(responsePlan.length > 0 || isPlanning) && (
-            <div className="mb-6 p-4 bg-secondary/50 rounded-lg border border-secondary animate-fade-in">
-              <div className="flex items-center gap-2 mb-3">
-                <div className="w-6 h-6 rounded-full bg-primary flex items-center justify-center">
-                  <span className="text-xs font-bold text-primary-foreground">📋</span>
+            <div className="mb-6 p-4 bg-gradient-to-r from-secondary/50 to-secondary/30 rounded-lg border border-secondary animate-fade-in">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center shadow-lg">
+                  <span className="text-sm font-bold text-primary-foreground">📋</span>
                 </div>
-                <h3 className="font-semibold text-foreground">
-                  {isPlanning ? "Создание плана ответа..." : "План выполнения"}
-                </h3>
+                <div>
+                  <h3 className="font-semibold text-foreground text-lg">
+                    {isPlanning ? "Создание плана выполнения" : `План выполнения (${responsePlan.length} шагов)`}
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    {isPlanning ? "Анализирую ваш запрос и планирую действия..." : "Каждый шаг выполняется последовательно для лучшего результата"}
+                  </p>
+                </div>
               </div>
 
               {isPlanning ? (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <div className="animate-spin rounded-full h-4 w-4 border-2 border-primary border-t-transparent" />
-                  <span className="text-sm">Анализирую ваш вопрос и составляю план...</span>
+                <div className="flex items-center gap-3 text-muted-foreground bg-background/50 p-3 rounded-lg">
+                  <div className="animate-spin rounded-full h-5 w-5 border-2 border-primary border-t-transparent" />
+                  <span className="text-sm font-medium">Генерирую оптимальный план решения вашей задачи...</span>
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {responsePlan.map((step, index) => (
                     <div
                       key={index}
-                      className={`flex items-start gap-3 p-2 rounded ${
+                      className={`flex items-start gap-4 p-4 rounded-lg transition-all duration-300 ${
                         index === currentStep
-                          ? 'bg-primary/10 border border-primary/20'
+                          ? 'bg-primary/15 border-2 border-primary/30 shadow-md'
                           : step.completed
-                            ? 'bg-green-50 border border-green-200'
-                            : 'bg-muted/30'
+                            ? 'bg-green-50/80 border border-green-200/50'
+                            : 'bg-background/60 border border-muted/30 hover:border-muted/50'
                       }`}
                     >
-                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-medium mt-0.5 ${
+                      <div className={`w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold mt-0.5 transition-all ${
                         index === currentStep
-                          ? 'bg-primary text-primary-foreground animate-pulse'
+                          ? 'bg-primary text-primary-foreground shadow-lg animate-pulse'
                           : step.completed
-                            ? 'bg-green-500 text-white'
+                            ? 'bg-green-500 text-white shadow-md'
                             : 'bg-muted text-muted-foreground'
                       }`}>
                         {step.completed ? '✓' : index === currentStep ? '⏳' : index + 1}
                       </div>
-                      <div className="flex-1">
-                        <div className="font-medium text-sm text-foreground">
+                      <div className="flex-1 min-w-0">
+                        <div className={`font-semibold text-sm mb-2 transition-colors ${
+                          index === currentStep ? 'text-primary' :
+                          step.completed ? 'text-green-700' : 'text-foreground'
+                        }`}>
                           {step.step}
                         </div>
-                        <div className="text-xs text-muted-foreground mt-1">
+                        <div className="text-sm text-muted-foreground leading-relaxed">
                           {step.description}
                         </div>
+                        {index === currentStep && (
+                          <div className="mt-3 flex items-center gap-2 text-xs text-primary font-medium">
+                            <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
+                            Выполняется сейчас...
+                          </div>
+                        )}
+                        {step.completed && (
+                          <div className="mt-3 flex items-center gap-2 text-xs text-green-600 font-medium">
+                            <div className="w-2 h-2 bg-green-500 rounded-full" />
+                            Шаг завершен
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -638,7 +760,7 @@ const Chat = () => {
                   </SelectContent>
                 </Select>
                 <span className="text-[10px] sm:text-xs text-muted-foreground hidden sm:inline whitespace-nowrap">
-                  {selectedModel === "pro" ? "Максимальная производительность" : "Быстрые ответы"}
+                  {selectedModel === "pro" ? "GPT-4o оптимизированный" : "Быстрые ответы"}
                 </span>
               </div>
               

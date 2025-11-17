@@ -2,8 +2,19 @@
 
 **WindexsChat 2.0** - это полнофункциональный AI-ассистент с поддержкой чатов, обработки файлов, визуализации данных и многого другого.
 
+[![Live Demo](https://img.shields.io/badge/Live-Demo-brightgreen)](https://ai.windexs.ru)
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-blue)](https://github.com/RockInMyHead/WindexsChat2.0)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+
+## 🌐 Онлайн версия
+
+**Проект доступен онлайн:** [https://ai.windexs.ru](https://ai.windexs.ru)
+
+- ✅ Полностью функциональная версия
+- ✅ Бесплатный план WindexsAI Lite
+- ✅ Платный план WindexsAI Pro (₽399/месяц)
+
+📖 **[Инструкции по развертыванию](DEPLOYMENT.md)** - как запустить проект на своем сервере
 
 ## 🚀 Быстрый старт
 
