@@ -13,10 +13,10 @@ const app = express();
 const PORT = process.env.PORT || 1062;
 
 // Настройка прокси для Undici (встроенный fetch в Node.js)
-const PROXY_URL = process.env.PROXY_URL || 'http://pb3jms:85pNLX@45.147.180.58:8000';
-const proxyAgent = new ProxyAgent({
+const PROXY_URL = process.env.PROXY_URL;
+const proxyAgent = PROXY_URL ? new ProxyAgent({
   uri: PROXY_URL
-});
+}) : null;
 
 // Middleware
 app.use(cors({
@@ -146,7 +146,7 @@ app.get('/api/web-search', async (req, res) => {
 
         if (cryptoIds.length > 0) {
           const cryptoResponse = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${cryptoIds.join(',')}&vs_currencies=usd,rub,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`, {
-            dispatcher: proxyAgent,
+            ...(proxyAgent && { dispatcher: proxyAgent }),
             headers: {
               'User-Agent': 'Mozilla/5.0 (compatible; WindexsAI/1.0)',
               'Accept': 'application/json'
@@ -195,7 +195,7 @@ app.get('/api/web-search', async (req, res) => {
 
       // Сначала пробуем оригинальный запрос
       let instantResponse = await fetch(`https://api.duckduckgo.com/?q=${encodedQuery}&format=json&no_redirect=1&no_html=1`, {
-        dispatcher: proxyAgent
+        ...(proxyAgent && { dispatcher: proxyAgent })
       });
       let instantData = null;
 
@@ -219,7 +219,7 @@ app.get('/api/web-search', async (req, res) => {
 
         console.log('Trying English query:', englishQuery);
         const englishResponse = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(englishQuery)}&format=json&no_redirect=1&no_html=1`, {
-          dispatcher: proxyAgent
+          ...(proxyAgent && { dispatcher: proxyAgent })
         });
 
         if (englishResponse.ok) {
@@ -266,12 +266,12 @@ app.get('/api/web-search', async (req, res) => {
 
       // Сначала пробуем русский
       let wikiResponse = await fetch(`https://ru.wikipedia.org/api/rest_v1/page/summary/${wikiQuery}`, {
-        dispatcher: proxyAgent
+        ...(proxyAgent && { dispatcher: proxyAgent })
       });
       if (!wikiResponse.ok) {
         // Если русский не найден, пробуем английский
         wikiResponse = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${wikiQuery}`, {
-          dispatcher: proxyAgent
+          ...(proxyAgent && { dispatcher: proxyAgent })
         });
       }
 
@@ -293,7 +293,7 @@ app.get('/api/web-search', async (req, res) => {
       try {
         const term = query.replace(/что такое\s+/i, '').replace(/определение\s+/i, '').trim();
         const glosbeResponse = await fetch(`https://glosbe.com/gapi/translate?from=ru&dest=en&format=json&phrase=${encodeURIComponent(term)}`, {
-          dispatcher: proxyAgent
+          ...(proxyAgent && { dispatcher: proxyAgent })
         });
 
         if (glosbeResponse.ok) {
@@ -365,7 +365,7 @@ app.get('/api/web-search', async (req, res) => {
         for (const businessQuery of businessQueries) {
           try {
             const businessSearch = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(businessQuery)}&format=json&no_html=1&skip_disambig=1`, {
-              dispatcher: proxyAgent
+              ...(proxyAgent && { dispatcher: proxyAgent })
             });
             if (businessSearch.ok) {
               const data = await businessSearch.json();
@@ -405,7 +405,7 @@ app.get('/api/web-search', async (req, res) => {
           for (const officialQuery of officialQueries) {
             try {
               const officialSearch = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(officialQuery)}&format=json&no_html=1&skip_disambig=1`, {
-                dispatcher: proxyAgent
+                ...(proxyAgent && { dispatcher: proxyAgent })
               });
               if (officialSearch.ok) {
                 const data = await officialSearch.json();
@@ -431,7 +431,7 @@ app.get('/api/web-search', async (req, res) => {
           ];
           for (const wikiQuery of wikiQueries) {
             const wikiResponse = await fetch(`https://ru.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiQuery)}`, {
-              dispatcher: proxyAgent
+              ...(proxyAgent && { dispatcher: proxyAgent })
             });
             if (wikiResponse.ok) {
               const wikiData = await wikiResponse.json();
@@ -459,7 +459,7 @@ app.get('/api/web-search', async (req, res) => {
           const enWikiQueries = ['Coffeehouse', 'Coffee industry in Russia', 'Coffee market', 'Foodservice industry in Russia'];
           for (const wikiQuery of enWikiQueries) {
             const wikiResponse = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiQuery)}`, {
-              dispatcher: proxyAgent
+              ...(proxyAgent && { dispatcher: proxyAgent })
             });
             if (wikiResponse.ok) {
               const wikiData = await wikiResponse.json();
@@ -492,7 +492,7 @@ app.get('/api/web-search', async (req, res) => {
           : encodedQuery;
 
         const newsResponse = await fetch(`https://newsapi.org/v2/everything?q=${searchQuery}&language=ru&sortBy=publishedAt&pageSize=5&apiKey=demo`, {
-          dispatcher: proxyAgent
+          ...(proxyAgent && { dispatcher: proxyAgent })
         });
         if (newsResponse.ok) {
           const newsData = await newsResponse.json();
@@ -528,7 +528,7 @@ app.get('/api/web-search', async (req, res) => {
     if (lowerQuery.includes('как') || lowerQuery.includes('почему') || lowerQuery.includes('ошибк') || lowerQuery.includes('программировани')) {
       try {
         const stackResponse = await fetch(`https://api.stackexchange.com/2.3/search?order=desc&sort=relevance&tagged=javascript&intitle=${encodedQuery}&site=stackoverflow`, {
-          dispatcher: proxyAgent
+          ...(proxyAgent && { dispatcher: proxyAgent })
         });
         if (stackResponse.ok) {
           const stackData = await stackResponse.json();
@@ -589,13 +589,15 @@ app.post('/api/chat', async (req, res) => {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
       },
-      dispatcher: proxyAgent,
+      ...(proxyAgent && { dispatcher: proxyAgent }),
       body: JSON.stringify({
-        model: model === 'pro' ? 'gpt-4o' : 'gpt-4o-mini',
+        model: 'gpt-5.1',
         messages,
         stream,
+        reasoning: "none",             // отключить reasoning для минимальной задержки
+        prompt_cache_retention: "24h", // расширенное кеширование
+        max_output_tokens: 12000,        // ограничение выходных токенов
         temperature: 0.7,
-        max_tokens: model === 'pro' ? 8000 : 4000, // Больше токенов для Pro модели
       }),
     });
 

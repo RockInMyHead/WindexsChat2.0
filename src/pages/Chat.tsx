@@ -104,6 +104,8 @@ const Chat = () => {
 
   // AbortController для прерывания запросов
   const abortControllerRef = useRef<AbortController | null>(null);
+  // Флаг для предотвращения одновременных отправок
+  const isSendingRef = useRef(false);
 
   // Функция для переключения интернет-поиска
   const handleToggleInternet = () => {
@@ -228,10 +230,13 @@ const Chat = () => {
 
   const sendMessage = async (messageText: string) => {
     console.log('sendMessage called with:', messageText, 'currentSessionId:', currentSessionId);
-    if (!messageText.trim() || isLoading || !currentSessionId) {
-      console.log('sendMessage blocked:', { messageText: !!messageText.trim(), isLoading, currentSessionId });
+    if (!messageText.trim() || isLoading || !currentSessionId || isSendingRef.current) {
+      console.log('sendMessage blocked:', { messageText: !!messageText.trim(), isLoading, currentSessionId, isSending: isSendingRef.current });
       return;
     }
+
+    // Устанавливаем флаг отправки
+    isSendingRef.current = true;
 
     const userMessage: Message = { role: "user", content: messageText };
     const systemMessage: Message = {
@@ -359,14 +364,17 @@ const Chat = () => {
     } finally {
       console.log("sendMessage finished, setting isLoading to false");
       setIsLoading(false);
-      // Сбрасываем AbortController
+      // Сбрасываем флаги
+      isSendingRef.current = false;
       abortControllerRef.current = null;
     }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    sendMessage(input);
+    if (!isLoading && !isSendingRef.current) {
+      sendMessage(input);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -510,6 +518,7 @@ const Chat = () => {
       setIsPlanning(false);
       setSearchProgress([]);
       setIsLoading(false); // Сбрасываем состояние загрузки
+      isSendingRef.current = false; // Сбрасываем флаг отправки
 
       // Создаем новую сессию
       const { sessionId: newSessionId } = await apiClient.createSession("Новый чат");
@@ -760,7 +769,7 @@ const Chat = () => {
                   </SelectContent>
                 </Select>
                 <span className="text-[10px] sm:text-xs text-muted-foreground hidden sm:inline whitespace-nowrap">
-                  {selectedModel === "pro" ? "GPT-4o оптимизированный" : "Быстрые ответы"}
+                  {selectedModel === "pro" ? "GPT-5.1 Pro" : "GPT-5.1 Lite"}
                 </span>
               </div>
               

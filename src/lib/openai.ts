@@ -13,14 +13,29 @@ const searchWeb = async (query: string): Promise<string> => {
   let enhancedQuery = query;
   const lowerQuery = query.toLowerCase();
 
-  // Всегда добавляем 2025 год для актуальных данных, если год не указан
-  const needsYear = lowerQuery.includes('рынок') || lowerQuery.includes('статистика') ||
-                   lowerQuery.includes('тренд') || lowerQuery.includes('анализ') ||
-                   lowerQuery.includes('данные') || lowerQuery.includes('отчет') ||
-                   lowerQuery.includes('исследование') || lowerQuery.includes('прогноз') ||
-                   lowerQuery.includes('бизнес') || lowerQuery.includes('финанс') ||
-                   lowerQuery.includes('экономик') || lowerQuery.includes('рост') ||
-                   lowerQuery.includes('развитие') || lowerQuery.includes('состояние');
+  // Добавляем 2025 год ТОЛЬКО для действительно актуальных данных
+  // Исключаем классическую литературу, исторические произведения и вечные темы
+  const isLiteraryOrHistorical = lowerQuery.includes('война и мир') || lowerQuery.includes('толстой') ||
+                                lowerQuery.includes('литература') || lowerQuery.includes('классика') ||
+                                lowerQuery.includes('роман') || lowerQuery.includes('поэзия') ||
+                                lowerQuery.includes('проза') || lowerQuery.includes('драма') ||
+                                lowerQuery.includes('трагедия') || lowerQuery.includes('эпос') ||
+                                lowerQuery.includes('легенда') || lowerQuery.includes('миф') ||
+                                lowerQuery.includes('сказка') || lowerQuery.includes('былина') ||
+                                lowerQuery.includes('история литературы') || lowerQuery.includes('анализ текста');
+
+  const needsYear = !isLiteraryOrHistorical && (
+    lowerQuery.includes('рынок') || lowerQuery.includes('статистика') ||
+    lowerQuery.includes('тренд') || lowerQuery.includes('анализ') ||
+    lowerQuery.includes('данные') || lowerQuery.includes('отчет') ||
+    lowerQuery.includes('исследование') || lowerQuery.includes('прогноз') ||
+    lowerQuery.includes('бизнес') || lowerQuery.includes('финанс') ||
+    lowerQuery.includes('экономик') || lowerQuery.includes('рост') ||
+    lowerQuery.includes('развитие') || lowerQuery.includes('состояние') ||
+    lowerQuery.includes('актуальн') || lowerQuery.includes('современн') ||
+    lowerQuery.includes('текущ') || lowerQuery.includes('сегодня') ||
+    lowerQuery.includes('сейчас') || lowerQuery.includes('последн')
+  );
 
   if (needsYear && !/\b(202\d|201\d|200\d)\b/.test(query)) {
     enhancedQuery = `${query} 2025 год`;
@@ -544,10 +559,10 @@ const getSimpleResponse = async (query: string): Promise<string> => {
 const getActualModel = (selectedModel: string): string => {
   switch (selectedModel) {
     case 'pro':
-      return 'gpt-4o'; // Оптимизированная модель GPT-4o для Pro режима
+      return 'gpt-5.1'; // GPT-5.1 для Pro режима
     case 'lite':
     default:
-      return 'gpt-4o-mini'; // Быстрая и экономичная модель для Lite режима
+      return 'gpt-5.1'; // GPT-5.1 для Lite режима
   }
 };
 
@@ -555,12 +570,12 @@ const getActualModel = (selectedModel: string): string => {
 const getModelParams = (selectedModel: string) => {
   if (selectedModel === 'pro') {
     return {
-      max_tokens: 1024, // оптимизированное ограничение для скорости в Pro режиме
+      max_tokens: 12000, // увеличенное ограничение для GPT-5.1 Pro режима
       temperature: 0.7  // стандартная креативность
     };
   }
   return {
-    max_tokens: 4096, // полное ограничение для lite режима
+    max_tokens: 12000, // увеличенное ограничение для GPT-5.1 Lite режима
     temperature: 0.7  // стандартная креативность
   };
 };
@@ -599,6 +614,17 @@ export const sendChatMessage = async (
       console.log('Simple query detected, returning direct response without search or planning');
       // Возвращаем простой ответ без поиска и планирования
       const simpleResponse = await getSimpleResponse(userMessage.content);
+
+      // Имитируем потоковую передачу для простого ответа
+      if (onChunk) {
+        // Разбиваем ответ на символы для имитации потоковой передачи
+        for (const char of simpleResponse) {
+          onChunk(char);
+          // Небольшая задержка для имитации потоковой передачи
+          await new Promise(resolve => setTimeout(resolve, 5));
+        }
+      }
+
       return simpleResponse;
     }
   }
@@ -642,6 +668,8 @@ export const sendChatMessage = async (
 
       // Генерируем план для комплексных задач и запросов
       const shouldGeneratePlan = !isSimpleQuery && (
+        // Все запросы на создание контента требуют планирования
+        isContentCreation ||
         // Явные запросы на планирование
         lowerQuery.includes('план') ||
         lowerQuery.includes('разработ') ||
@@ -1035,10 +1063,9 @@ const generateResponsePlan = async (userQuestion: string, selectedModel: string)
   const planPrompt = `
 СОЗДАЙ ПЛАН С УКАЗАНИЕМ ПОИСКОВЫХ ЗАПРОСОВ ДЛЯ ИНТЕРНЕТА
 
-КРИТИЧНО ВАЖНО: СЕЙЧАС 2025 ГОД! ТЕКУЩИЙ ГОД - 2025!
-ОБЯЗАТЕЛЬНО ИСПОЛЬЗУЙ ТОЛЬКО ДАННЫЕ ЗА 2024-2025 ГОДЫ!
-ЗАПРЕЩЕНО ИСПОЛЬЗОВАТЬ ДАННЫЕ ИЗ 2023 ГОДА И РАНЬШЕ!
-ВСЕ ПОИСКОВЫЕ ЗАПРОСЫ ДОЛЖНЫ СОДЕРЖАТЬ "2025" ИЛИ "2024"!
+ВАЖНО: СЕЙЧАС 2025 ГОД! Используй актуальные данные где это имеет смысл.
+Для литературных произведений, классики и исторических тем НЕ добавляй год - эти знания вечны.
+Добавляй год ТОЛЬКО для актуальных данных: рынок, статистика, тренды, бизнес, финансы, технологии.
 
 ЗАПРОС ПОЛЬЗОВАТЕЛЯ: "${userQuestion}"
 

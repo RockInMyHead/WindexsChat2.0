@@ -73,9 +73,6 @@ export function ChatSidebar({ onSelectChat, currentSessionId, refreshTrigger, on
       return;
     }
 
-    if (!confirm(`Удалить чат "${sessionTitle}"?`)) {
-      return;
-    }
 
     try {
       console.log('Calling apiClient.deleteSession for sessionId:', sessionId);
