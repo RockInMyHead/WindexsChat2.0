@@ -41,22 +41,38 @@ npm run dev:full
 
 Приложение будет доступно по адресу:
 - **Frontend:** http://localhost:8081
-- **API сервер:** http://localhost:3003
+- **API сервер:** http://localhost:3002
+- **MCP сервер:** http://localhost:8002
 
-### Настройка OpenAI API
+### Настройка API ключей
 
-1. Получите API ключ от [OpenAI](https://platform.openai.com/api-keys)
-2. Создайте файл `.env` в корне проекта:
-```bash
-VITE_OPENAI_API_KEY=your_api_key_here
-```
+1. **OpenAI API ключ:**
+   - Получите ключ от [OpenAI](https://platform.openai.com/api-keys)
+   - Добавьте в `.env`:
+   ```bash
+   VITE_OPENAI_API_KEY=your_openai_key_here
+   ```
+
+2. **Tavily API ключ (для поиска в интернете):**
+   - Получите ключ от [Tavily](https://tavily.com/)
+   - Добавьте в `.env`:
+   ```bash
+   TAVILY_API_KEY=your_tavily_key_here
+   ```
+
+3. **Создайте файл `.env`:**
+   ```bash
+   VITE_OPENAI_API_KEY=your_openai_key_here
+   TAVILY_API_KEY=your_tavily_key_here
+   ```
 
 ### Доступные скрипты
 
 ```bash
 npm run dev          # Запуск frontend (Vite)
 npm run server       # Запуск API сервера (Express)
-npm run dev:full     # Запуск всего приложения
+npm run mcp          # Запуск MCP сервера для поиска
+npm run dev:full     # Запуск всего приложения (API + Frontend + MCP)
 npm run init-db      # Инициализация базы данных
 npm run build        # Сборка для production
 npm run preview      # Просмотр сборки
@@ -254,10 +270,21 @@ The database file (`windexs_chat.db`) is created automatically and stores all yo
 ## ✨ Ключевые возможности
 
 ### 🤖 AI интеграция
-- Поддержка GPT-4 и GPT-3.5-turbo
+- **Две модели:** WindexsAI Lite (GPT-4o-mini) и WindexsAI Pro (расширенная логика)
+- **Windexs Pro:** Двухэтапная логика (поиск + анализ) для глубоких ответов
 - Интеллектуальное планирование ответов
 - Потоковая генерация текста
 - Анализ и обработка документов
+
+### 🌐 Поиск в интернете (MCP)
+- **MCP сервер** для реального поиска в интернете
+- **Tavily API** интеграция для качественных результатов
+- **Умное распознавание** запросов, требующих актуальной информации:
+  - 📈 Финансовые данные (курсы валют, акции, криптовалюты)
+  - 🌤️ Погода и географическая информация
+  - 📰 Новости и текущие события
+  - 📊 Статистика и аналитика
+  - 🏢 Бизнес и маркетинговые данные
 
 ### 📊 Визуализация данных
 - Интерактивные графики (линейные, столбчатые, круговые)
@@ -286,20 +313,31 @@ The database file (`windexs_chat.db`) is created automatically and stores all yo
 
 ## 🚀 Последние обновления (v2.0)
 
+### 🌟 Новые возможности:
+- 🚀 **MCP сервер** для реального поиска в интернете
+- 🎯 **Windexs Pro модель** с двухэтапной логикой анализа
+- 🔍 **Умный поиск** для финансовых, погодных и новостных запросов
+- 📊 **Расширенная поддержка** различных типов запросов
+
+### 🐛 Исправления и улучшения:
 - ✅ **Исправлена ошибка 404** для PDF worker
 - ✅ **Добавлены блоки кода** в Telegram-стиле
-- ✅ **Реальные данные** для визуализаций (не синтетика)
-- ✅ **Улучшенная система поиска** в интернете
+- ✅ **Реальные данные** для визуализаций через интернет-поиск
+- ✅ **Улучшенная система поиска** с Tavily API
 - ✅ **Оптимизированные скрипты сборки**
 - ✅ **Автоматизация** копирования зависимостей
+- ✅ **Исправлены конфликты** в логике моделей
+- ✅ **Добавлено логирование** для отладки
 
 ## 🛠 Технологии
 
 - **Frontend:** React 18 + TypeScript + Vite
 - **Backend:** Node.js + Express.js
+- **MCP сервер:** Node.js + Tavily API для поиска в интернете
 - **База данных:** SQLite + better-sqlite3
 - **UI:** Tailwind CSS + Shadcn/ui + Radix UI
-- **AI:** OpenAI API (GPT-4, GPT-3.5-turbo)
+- **AI:** OpenAI API (GPT-4o-mini, GPT-5.1 через fallback)
+- **Поиск:** Tavily API для качественного веб-поиска
 - **Обработка файлов:** PDF.js, Tesseract.js, Mammoth.js
 - **Визуализация:** Recharts
 
