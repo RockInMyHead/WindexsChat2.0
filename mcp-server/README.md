@@ -17,7 +17,7 @@ MCP_PORT=8002
 npm start
 ```
 
-Сервер будет доступен на http://localhost:8002
+Сервер будет доступен на https://ai.windexs.ru/api/mcp
 
 ## API
 

@@ -47,17 +47,17 @@ npm run mcp
 
 1. **MCP сервер:**
    ```
-   curl http://localhost:8002/health
+   curl https://ai.windexs.ru/api/mcp/health
    ```
 
 2. **Тест поиска:**
    ```
-   curl "http://localhost:80/api/web-search?q=что+такое+искусственный+интеллект"
+   curl "https://ai.windexs.ru/api/web-search?q=что+такое+искусственный+интеллект"
    ```
 
 3. **Приложение:**
-   - Frontend: http://localhost:8081
-   - API: http://localhost:80
+   - Frontend: https://ai.windexs.ru
+   - API: https://ai.windexs.ru/api
 
 ## Архитектура
 

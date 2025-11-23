@@ -83,7 +83,7 @@ app.get('/health', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Tavily MCP Server running on http://localhost:${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/health`);
-  console.log(`🔍 Search endpoint: http://localhost:${PORT}/search`);
+  console.log(`🚀 Tavily MCP Server running on https://ai.windexs.ru/api/mcp`);
+  console.log(`📊 Health check: https://ai.windexs.ru/api/mcp/health`);
+  console.log(`🔍 Search endpoint: https://ai.windexs.ru/api/mcp/search`);
 });

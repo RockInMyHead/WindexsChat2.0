@@ -360,7 +360,7 @@ app.get('/api/web-search', async (req, res) => {
     if (!searchResults) {
       try {
         console.log('🌐 All searches via MCP server for:', query);
-        const mcpResponse = await fetch('http://localhost:8002/search', {
+        const mcpResponse = await fetch('https://ai.windexs.ru/api/mcp/search', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -459,7 +459,7 @@ app.post('/api/mcp/search', async (req, res) => {
 
     const fetch = (await import('node-fetch')).default;
 
-    const mcpResponse = await fetch('http://localhost:8002/search', {
+      const mcpResponse = await fetch('https://ai.windexs.ru/api/mcp/search', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -605,7 +605,7 @@ app.use((req, res, next) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+  console.log(`🚀 Server running on https://ai.windexs.ru`);
   console.log(`📦 Serving static files from dist/`);
 });
 

@@ -40,9 +40,9 @@ npm run dev:full
 ```
 
 Приложение будет доступно по адресу:
-- **Frontend:** http://localhost:8081
-- **API сервер:** http://localhost:3002
-- **MCP сервер:** http://localhost:8002
+- **Frontend:** https://ai.windexs.ru
+- **API сервер:** https://ai.windexs.ru/api
+- **MCP сервер:** https://ai.windexs.ru/api/mcp
 
 ### Настройка API ключей
 
