@@ -43,7 +43,47 @@ const searchWeb = async (query: string): Promise<string> => {
   }
 
   try {
-    // Используем backend endpoint для поиска, который обходит CORS ограничения
+    // Сначала пробуем Tavily MCP сервер для более качественного поиска
+    try {
+      console.log('🔍 Trying Tavily MCP search for:', enhancedQuery);
+      console.log('🔍 Fetch URL:', '/api/mcp/search');
+      const mcpResponse = await fetch('/api/mcp/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        mode: 'cors',
+        body: JSON.stringify({
+          query: enhancedQuery,
+          max_results: 5
+        })
+      });
+      console.log('🔍 MCP response status:', mcpResponse.status);
+
+      if (mcpResponse.ok) {
+        const mcpData = await mcpResponse.json();
+        console.log('🔍 MCP search successful, results:', mcpData.results ? mcpData.results.length : 0);
+
+        if (mcpData.results && mcpData.results.length > 0) {
+          // Форматируем результаты MCP для совместимости
+          const formattedResults = mcpData.results.map((result: any) =>
+            `${result.title}\n${result.content}\nИсточник: ${result.url}`
+          ).join('\n\n');
+          console.log('🔍 Using MCP results, length:', formattedResults.length);
+          return formattedResults;
+        } else {
+          console.log('🔍 MCP search returned no results');
+        }
+      } else {
+        const errorText = await mcpResponse.text();
+        console.log('🔍 MCP search failed with status:', mcpResponse.status, 'error:', errorText);
+      }
+    } catch (mcpError) {
+      console.log('🔍 MCP search not available, error:', mcpError.message, mcpError);
+    }
+
+    // MCP не сработал, используем основной backend endpoint для поиска
+    console.log('Using fallback web-search for:', enhancedQuery);
     const searchResponse = await fetch(`${API_BASE_URL}/web-search?q=${encodeURIComponent(enhancedQuery)}`, {
       method: 'GET',
       headers: {
@@ -371,6 +411,7 @@ const executeParallelSearches = async (
 // Функция определения необходимости веб-поиска (расширенная логика)
 const requiresWebSearch = (query: string): boolean => {
   const lowerQuery = query.toLowerCase();
+  console.log('🔍 requiresWebSearch called with query:', query, 'lowerQuery:', lowerQuery);
 
   // Простые запросы никогда не требуют поиска
   const isVerySimpleQuery = ['привет', 'hi', 'hello', 'здравствуй', 'здравствуйте', 'спасибо', 'благодарю', 'пока', 'до свидания', 'прощай', 'да', 'нет', 'ага', 'угу', 'хорошо', 'плохо', 'нормально', 'ок', 'окей', 'ладно', 'понятно', 'ясно', 'понял', 'хорошо'].some(simple =>
@@ -396,29 +437,39 @@ const requiresWebSearch = (query: string): boolean => {
   // =========== КЛЮЧЕВЫЕ СЛОВА, ТРЕБУЮЩИЕ ВЕСА ПОИСКА ===========
   
   // 1. АКТУАЛЬНОСТЬ И ВРЕМЯ (требуют свежей информации)
-  if (/\b(сейчас|сегодня|вчера|завтра|текущ|последн|новый|современн|актуальн|свеж|недавн|сегодняшн|новост|событи|происшествие)\b/i.test(lowerQuery)) {
+  if (/(сейчас|сегодня|вчера|завтра|текущ|последн|новый|современн|актуальн|свеж|недавн|сегодняшн|новост|событи|происшествие)/i.test(lowerQuery)) {
+    console.log('🔍 requiresWebSearch: TRUE for time/actual query');
     return true;
   }
 
   // 2. ФИНАНСОВЫЕ ДАННЫЕ И ЦЕНЫ
-  if (/\b(курс|цена|стоимост|цены|выплат|кредит|ставка|процент|доход|налог|сбор|взнос)\b/i.test(lowerQuery) ||
-      /\b(биткоин|доллар|евро|рубль|криптовалют|крипто|ценная бумага|акция|облигация)\b/i.test(lowerQuery) ||
-      /\b(btc|eth|bnb|ada|sol|dot|avax|matic|link|uni|usdc|usdt)\b/i.test(lowerQuery)) {
+  const financialMatch = /(курс|цена|стоимост|цены|выплат|кредит|ставка|процент|доход|налог|сбор|взнос)/i.test(lowerQuery);
+  const cryptoMatch1 = /(биткоин|доллар|евро|рубль|криптовалют|крипто|ценная бумага|акция|облигация)/i.test(lowerQuery);
+  const cryptoMatch2 = /(биткоин|биткойн)/i.test(lowerQuery);
+  const tickerMatch = /\b(btc|eth|bnb|ada|sol|dot|avax|matic|link|uni|usdc|usdt)\b/i.test(lowerQuery);
+
+  console.log('🔍 Financial checks:', { financialMatch, cryptoMatch1, cryptoMatch2, tickerMatch });
+
+  if (financialMatch || cryptoMatch1 || cryptoMatch2 || tickerMatch) {
+    console.log('🔍 requiresWebSearch: TRUE for financial/crypto query');
     return true;
   }
 
   // 3. СТАТИСТИКА, РЕЙТИНГИ, ТОП СПИСКИ
-  if (/\b(рейтинг|топ|лучш|худш|статистик|данные|отчет|анализ|исследован|опрос|результат)\b/i.test(lowerQuery)) {
+  if (/(рейтинг|топ|лучш|худш|статистик|данные|отчет|анализ|исследован|опрос|результат)/i.test(lowerQuery)) {
+    console.log('🔍 requiresWebSearch: TRUE for stats/ratings query');
     return true;
   }
 
   // 4. НОВОСТИ, СОБЫТИЯ, ПРОИСШЕСТВИЯ
-  if (/\b(новост|событи|происшестви|трагед|катастроф|аварий|авари|сообщ|объявлен|зарегистр)\b/i.test(lowerQuery)) {
+  if (/(новост|событи|происшестви|трагед|катастроф|аварий|авари|сообщ|объявлен|зарегистр)/i.test(lowerQuery)) {
+    console.log('🔍 requiresWebSearch: TRUE for news/events query');
     return true;
   }
 
   // 5. ГЕОГРАФИЧЕСКИЕ, ДЕМОГРАФИЧЕСКИЕ И СОЦИАЛЬНЫЕ ДАННЫЕ
-  if (/\b(население|жител|город|страна|регион|область|район|адрес|место|географи|климат|погод|метеоролог|условия)\b/i.test(lowerQuery)) {
+  if (/(население|жител|город|страна|регион|область|район|адрес|место|географи|климат|погод|метеоролог|условия)/i.test(lowerQuery)) {
+    console.log('🔍 requiresWebSearch: TRUE for geo/weather query');
     return true;
   }
 
@@ -486,6 +537,7 @@ const requiresWebSearch = (query: string): boolean => {
     return true;
   }
 
+  console.log('🔍 requiresWebSearch result: false for query:', query);
   return false;
 };
 
@@ -506,6 +558,66 @@ export interface PlanStep {
   searchQueries?: SearchQuery[]; // Что нужно найти для этого шага
   completed: boolean;
 }
+
+// СПЕЦИАЛЬНАЯ ФУНКЦИЯ ДЛЯ МОДЕЛИ PRO
+const handleProModelLogic = async (
+  messages: Message[],
+  userMessage: Message,
+  abortSignal?: AbortSignal,
+  onChunk?: (chunk: string) => void
+): Promise<string> => {
+  console.log('🎯 Using PRO model logic: MCP search + GPT-4o-mini analysis');
+
+  // ШАГ 1: Получаем информацию через MCP поиск
+  console.log('🔍 Step 1: Getting information via MCP search');
+  const searchResults = await searchWeb(userMessage.content);
+  console.log('✅ Search results from MCP:', searchResults.substring(0, 200) + '...');
+
+  // ШАГ 2: Передаем результаты MCP поиска GPT-4o-mini для анализа
+  console.log('🎯 Step 2: Analyzing MCP results with GPT-4o-mini');
+  const analysisMessages = [
+    {
+      role: 'system',
+      content: 'Ты продвинутый AI-ассистент. Тебе предоставлена актуальная информация, полученная из поиска в интернете. Проанализируй эту информацию и дай подробный, полезный ответ на вопрос пользователя. Используй только предоставленные данные для ответа.'
+    },
+    {
+      role: 'user',
+      content: `Актуальная информация из интернета:\n${searchResults}\n\nВопрос пользователя: ${userMessage.content}\n\nНа основе предоставленной информации дай полный и точный ответ на вопрос.`
+    }
+  ];
+
+  const analysisResponse = await fetch(`${API_BASE_URL}/chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messages: analysisMessages,
+      model: 'gpt-4o-mini',
+      stream: false,
+    }),
+    signal: abortSignal,
+  });
+
+  if (!analysisResponse.ok) {
+    throw new Error(`GPT-5.1 analysis failed: ${analysisResponse.status}`);
+  }
+
+  const analysisData = await analysisResponse.json();
+  const finalAnswer = analysisData.choices[0]?.message?.content || 'Не удалось проанализировать информацию';
+
+  console.log('✅ Final answer from GPT-5.1 analysis:', finalAnswer.substring(0, 200) + '...');
+
+  // Имитируем потоковую передачу для совместимости с UI
+  if (onChunk) {
+    for (const char of finalAnswer) {
+      onChunk(char);
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+
+  return finalAnswer;
+};
 
 // Функция для обработки простых запросов без поиска
 const getSimpleResponse = async (query: string): Promise<string> => {
@@ -562,7 +674,7 @@ const getActualModel = (selectedModel: string): string => {
       return 'gpt-5.1'; // GPT-5.1 для Pro режима
     case 'lite':
     default:
-      return 'gpt-5.1'; // GPT-5.1 для Lite режима
+      return 'gpt-4o-mini'; // GPT-4o Mini для Lite режима
   }
 };
 
@@ -590,13 +702,22 @@ export const sendChatMessage = async (
   internetEnabled?: boolean,
   abortSignal?: AbortSignal
 ): Promise<string> => {
+  console.log('🚀 sendChatMessage called with model:', selectedModel, 'message count:', messages.length, 'internetEnabled:', internetEnabled);
+
+  const userMessage = messages[messages.length - 1];
+  console.log('👤 User message:', userMessage?.content);
+  console.log('🔍 selectedModel check:', selectedModel, '=== "pro"?', selectedModel === 'pro');
+
+  // СПЕЦИАЛЬНАЯ ЛОГИКА ДЛЯ МОДЕЛИ PRO (GPT-5.1) - выносим выше для надежности
+  if (selectedModel === 'pro') {
+    console.log('🎯 EARLY PRO model logic activated!');
+    return handleProModelLogic(messages, userMessage, abortSignal, onChunk);
+  }
   // Конвертируем выбранную модель в реальную модель OpenAI
   const actualModel = getActualModel(selectedModel);
   const modelParams = getModelParams(selectedModel);
-  console.log('sendChatMessage called with:', { messagesCount: messages.length, selectedModel, actualModel, modelParams, hasOnChunk: !!onChunk });
 
   // Проверяем, является ли запрос очень простым
-  const userMessage = messages[messages.length - 1];
   if (userMessage && userMessage.role === 'user') {
     const lowerQuery = userMessage.content.toLowerCase().trim();
 
@@ -637,6 +758,7 @@ export const sendChatMessage = async (
       return "Извините, сервис AI временно недоступен. Пожалуйста, проверьте настройки API ключа.";
     }
     console.log('API is available');
+
     const userMessage = messages[messages.length - 1];
     const isFirstResponse = messages.filter(m => m.role === 'assistant').length === 0;
 
@@ -648,6 +770,7 @@ export const sendChatMessage = async (
       const isContentCreation = ['напиши', 'создай', 'разработай', 'придумай', 'предложи', 'составь', 'опиши', 'расскажи', 'продолжи'].some(keyword =>
         lowerQuery.includes(keyword)
       );
+      console.log('Query analysis - isContentCreation:', isContentCreation, 'query length:', lowerQuery.length);
 
       let plan: PlanStep[] = [];
       let searchResults = '';
@@ -705,8 +828,19 @@ export const sendChatMessage = async (
         lowerQuery.includes('покажи как')
       );
 
+      console.log('Plan generation decision - shouldGeneratePlan:', shouldGeneratePlan, 'isSimpleQuery:', isSimpleQuery, 'isContentCreation:', isContentCreation);
+
       if (shouldGeneratePlan) {
+        try {
+          console.log('Generating response plan for:', userMessage.content);
         plan = await generateResponsePlan(userMessage.content, selectedModel);
+          console.log('Plan generated successfully:', plan.length, 'steps');
+        } catch (planError) {
+          console.error('Error generating response plan:', planError);
+          // Продолжаем без плана, если генерация не удалась
+          plan = [];
+          console.log('Continuing without plan due to generation error');
+        }
       }
 
       // Проверяем, требуется ли поиск в интернете
@@ -732,6 +866,7 @@ export const sendChatMessage = async (
         const needsWebSearch = requiresWebSearch(userMessage.content) || shouldSearchForPlan;
 
         if (needsWebSearch) {
+          try {
           console.log('Web search required for:', userMessage.content);
           console.log('Query analysis:', {
             hasSearchKeyword: ['актуальн', 'сейчас', 'последн', 'новост', 'сегодня', 'время', 'курс', 'цена', 'стоимост', 'рейтинг', 'топ', 'лучш', 'статистик', 'данн', 'отчет', 'тренд', 'мод', 'популярн', 'событи', 'происшестви', 'изменени', 'обновлени', 'нов', 'текущ', 'свеж', 'последн', 'настоящ'].some(keyword => userMessage.content.toLowerCase().includes(keyword)),
@@ -742,6 +877,10 @@ export const sendChatMessage = async (
           });
           searchResults = await searchWeb(userMessage.content);
           console.log('Search completed, results:', searchResults.substring(0, 200) + '...');
+          } catch (searchError) {
+            console.error('Error during web search:', searchError);
+            searchResults = '[SEARCH_ERROR]'; // Продолжаем без результатов поиска
+          }
         }
       }
 
@@ -834,6 +973,9 @@ ${planDescription}
           }
         ];
 
+        // GPT-5.1 не поддерживает streaming
+        const useStreaming = actualModel !== 'gpt-5.1';
+
         const response = await fetch(`${API_BASE_URL}/chat`, {
           method: 'POST',
           headers: {
@@ -845,7 +987,7 @@ ${planDescription}
               content: msg.content,
             })),
             model: actualModel,
-            stream: true,
+            stream: useStreaming,
             ...modelParams,
           }),
           signal: abortSignal,
@@ -855,6 +997,8 @@ ${planDescription}
           throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
         }
 
+        if (useStreaming) {
+          // Обрабатываем потоковый ответ для моделей, поддерживающих streaming
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
 
@@ -888,6 +1032,22 @@ ${planDescription}
           }
         } finally {
           reader.releaseLock();
+          }
+        } else {
+          // Обрабатываем обычный JSON ответ для GPT-5.1
+          const data = await response.json();
+          const content = data.choices[0]?.message?.content || '';
+          fullResponse = content;
+
+          // Имитируем потоковую передачу для совместимости с UI
+          if (onChunk) {
+            // Разбиваем ответ на символы для имитации потоковой передачи
+            for (const char of content) {
+              onChunk(char);
+              // Небольшая задержка для имитации потоковой передачи
+              await new Promise(resolve => setTimeout(resolve, 10));
+            }
+          }
         }
 
         // Отмечаем все шаги как завершенные (они уже обработаны в одном ответе)
@@ -895,21 +1055,75 @@ ${planDescription}
           step.completed = true;
         });
       } else {
-        // Обычный ответ без плана (для простых запросов)
-        const searchContext = searchResults && searchResults !== '[NO_RESULTS_FOUND]' && !searchResults.includes('технической ошибки')
+        console.log('📝 Using simple response path (no plan) for:', userMessage.content);
+        // Обычный ответ без плана - проверяем, нужен ли поиск для простых запросов
+        let searchResults = '';
+
+        console.log('🔍 Checking internet search - internetEnabled:', internetEnabled);
+        if (internetEnabled !== false) {
+          const needsWebSearch = requiresWebSearch(userMessage.content);
+          console.log('🔍 Simple query needs web search:', needsWebSearch, 'for:', userMessage.content);
+
+        if (needsWebSearch) {
+          try {
+            console.log('🌐 Starting web search for simple query:', userMessage.content);
+            console.log('🌐 Calling MCP API directly at:', window.location.origin + '/api/mcp/search');
+            const mcpResponse = await fetch('/api/mcp/search', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                query: userMessage.content,
+                max_results: 5
+              })
+            });
+            console.log('🌐 MCP fetch completed, status:', mcpResponse.status);
+
+            if (mcpResponse.ok) {
+              const mcpData = await mcpResponse.json();
+              console.log('🌐 MCP API response:', mcpData);
+
+              if (mcpData.results && mcpData.results.length > 0) {
+                searchResults = mcpData.results.map((result: any) =>
+                  `${result.title}\n${result.content}\nИсточник: ${result.url}`
+                ).join('\n\n');
+                console.log('✅ MCP search successful, formatted results length:', searchResults.length);
+              } else {
+                searchResults = '[NO_RESULTS_FOUND]';
+                console.log('⚠️ MCP returned no results for query:', userMessage.content);
+              }
+            } else {
+              const errorText = await mcpResponse.text();
+              console.error('❌ MCP API error:', mcpResponse.status, errorText);
+              searchResults = '[SEARCH_ERROR]';
+            }
+          } catch (searchError) {
+            console.error('❌ Error during MCP API call:', searchError);
+            searchResults = '[SEARCH_ERROR]';
+          }
+        } else {
+          console.log('🚫 Simple query does not need web search');
+        }
+        } else {
+          console.log('🚫 Internet search disabled');
+        }
+
+        const searchContext = searchResults && searchResults !== '[NO_RESULTS_FOUND]' && !searchResults.includes('технической ошибки') && !searchResults.includes('[SEARCH_ERROR]')
           ? `Результаты поиска в интернете:\n${searchResults}\n\n`
           : '';
 
         console.log('Simple query - searchContext:', searchContext ? 'HAS_CONTEXT' : 'NO_CONTEXT');
         console.log('Simple query - searchResults:', searchResults);
+        console.log('Simple query - searchContext length:', searchContext.length);
 
         // Для изоляции контекста используем только системное сообщение + текущий запрос
         const systemMessage = messages.find(msg => msg.role === 'system');
         const enhancedMessages = searchContext ? [
-          systemMessage || { role: 'system' as const, content: 'Ты полезный AI-ассистент.' },
+          systemMessage || { role: 'system' as const, content: 'Ты полезный AI-ассистент. Используй предоставленную информацию из поиска для ответа на вопросы пользователя.' },
           {
             role: 'user' as const,
-            content: `${searchContext}${userMessage.content}`
+            content: `Информация из интернета: ${searchContext}\n\nВопрос: ${userMessage.content}`
           }
         ] : [
           systemMessage || {
@@ -926,6 +1140,9 @@ ${planDescription}
           stream: true
         });
 
+        // GPT-5.1 не поддерживает streaming
+        const useStreaming = actualModel !== 'gpt-5.1';
+
         const response = await fetch(`${API_BASE_URL}/chat`, {
           method: 'POST',
           headers: {
@@ -937,7 +1154,7 @@ ${planDescription}
               content: msg.content,
             })),
             model: actualModel,
-            stream: true,
+            stream: useStreaming,
             ...modelParams,
           }),
           signal: abortSignal,
@@ -949,6 +1166,8 @@ ${planDescription}
           throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
         }
 
+        if (useStreaming) {
+          // Обрабатываем потоковый ответ
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
 
@@ -983,10 +1202,27 @@ ${planDescription}
         } finally {
           reader.releaseLock();
         }
+        } else {
+          // Обрабатываем обычный JSON ответ для GPT-5.1
+          const data = await response.json();
+          const content = data.choices[0]?.message?.content || '';
+          fullResponse = content;
+
+          // Имитируем потоковую передачу для совместимости с UI
+          if (onChunk) {
+            for (const char of content) {
+              onChunk(char);
+              await new Promise(resolve => setTimeout(resolve, 10));
+            }
+          }
+        }
 
       }
     } else {
       // Обычный ответ без плана (для последующих сообщений)
+      // GPT-5.1 не поддерживает streaming
+      const useStreaming = actualModel !== 'gpt-5.1';
+
       const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
         headers: {
@@ -998,7 +1234,7 @@ ${planDescription}
             content: msg.content,
           })),
           model: actualModel,
-          stream: true,
+          stream: useStreaming,
           ...modelParams,
         }),
       });
@@ -1007,6 +1243,8 @@ ${planDescription}
         throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
       }
 
+      if (useStreaming) {
+        // Обрабатываем потоковый ответ
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
 
@@ -1040,6 +1278,20 @@ ${planDescription}
         }
       } finally {
         reader.releaseLock();
+        }
+      } else {
+        // Обрабатываем обычный JSON ответ для GPT-5.1
+        const data = await response.json();
+        const content = data.choices[0]?.message?.content || '';
+        fullResponse = content;
+
+        // Имитируем потоковую передачу для совместимости с UI
+        if (onChunk) {
+          for (const char of content) {
+            onChunk(char);
+            await new Promise(resolve => setTimeout(resolve, 10));
+          }
+        }
       }
     }
 
@@ -1132,6 +1384,7 @@ const generateResponsePlan = async (userQuestion: string, selectedModel: string)
 ]
 `;
 
+  // GPT-5.1 не поддерживает streaming, но здесь мы и так используем stream: false
   const response = await fetch(`${API_BASE_URL}/chat`, {
     method: 'POST',
     headers: {
@@ -1153,7 +1406,15 @@ const generateResponsePlan = async (userQuestion: string, selectedModel: string)
 
   const responseData = await response.json();
 
-  const planText = responseData.choices[0]?.message?.content || '[]';
+  // Обработка ответа в зависимости от используемого API
+  let planText;
+  if (actualModel === 'gpt-5.1') {
+    // Новый Responses API
+    planText = responseData.output_text || '[]';
+  } else {
+    // Старый Chat Completions API
+    planText = responseData.choices[0]?.message?.content || '[]';
+  }
 
   try {
     // Очищаем текст от возможных обратных кавычек и лишних символов
@@ -1396,6 +1657,9 @@ ${searchContext}
       };
     });
 
+    // GPT-5.1 не поддерживает streaming
+    const useStreaming = actualModel !== 'gpt-5.1';
+
     const response = await fetch(`${API_BASE_URL}/chat`, {
       method: 'POST',
       headers: {
@@ -1404,7 +1668,7 @@ ${searchContext}
       body: JSON.stringify({
         messages: stepMessages,
         model: actualModel,
-        stream: true,
+        stream: useStreaming,
       }),
     });
 
@@ -1413,6 +1677,9 @@ ${searchContext}
     }
 
     let stepResponse = '';
+
+    if (useStreaming) {
+      // Обрабатываем потоковый ответ
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
 
@@ -1446,6 +1713,20 @@ ${searchContext}
       }
     } finally {
       reader.releaseLock();
+      }
+    } else {
+      // Обрабатываем обычный JSON ответ для GPT-5.1
+      const data = await response.json();
+      const content = data.choices[0]?.message?.content || '';
+      stepResponse = content;
+
+      // Имитируем потоковую передачу для совместимости с UI
+      if (onChunk) {
+        for (const char of content) {
+          onChunk(char);
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+      }
     }
 
     return stepResponse;

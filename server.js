@@ -32,8 +32,10 @@ app.use(express.json());
 // Создать новую сессию чата
 app.post('/api/sessions', (req, res) => {
   try {
+    console.log('POST /api/sessions called with:', req.body, 'headers:', req.headers.origin);
     const { title = 'Новый чат' } = req.body;
     const sessionId = DatabaseService.createSession(title);
+    console.log('Session created successfully:', sessionId);
     res.json({ sessionId });
   } catch (error) {
     console.error('Error creating session:', error);
@@ -44,7 +46,9 @@ app.post('/api/sessions', (req, res) => {
 // Получить все сессии
 app.get('/api/sessions', (req, res) => {
   try {
+    console.log('GET /api/sessions called, headers:', req.headers.origin);
     const sessions = DatabaseService.getAllSessions();
+    console.log('Returning', sessions.length, 'sessions');
     res.json(sessions);
   } catch (error) {
     console.error('Error getting sessions:', error);
@@ -568,9 +572,41 @@ app.get('/api/web-search', async (req, res) => {
   }
 });
 
+// MCP server proxy for web search
+app.post('/api/mcp/search', async (req, res) => {
+  try {
+    console.log('🔍 MCP search proxy request:', req.body?.query);
+
+    const fetch = (await import('node-fetch')).default;
+
+    const mcpResponse = await fetch('http://localhost:8002/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(req.body)
+    });
+
+    if (!mcpResponse.ok) {
+      throw new Error(`MCP server error: ${mcpResponse.status}`);
+    }
+
+    const data = await mcpResponse.json();
+    res.json(data);
+
+  } catch (error) {
+    console.error('❌ MCP proxy error:', error);
+    res.status(500).json({
+      error: 'MCP search failed',
+      details: error.message
+    });
+  }
+});
+
 // OpenAI Chat API proxy (обход CORS ограничений)
 app.post('/api/chat', async (req, res) => {
   try {
+    console.log('🔥 API /chat request received:', req.body?.messages?.[req.body.messages.length - 1]?.content);
     const { messages, model = 'gpt-4o-mini', stream = false } = req.body;
 
     if (!messages || !Array.isArray(messages)) {
@@ -583,6 +619,15 @@ app.post('/api/chat', async (req, res) => {
       return res.status(500).json({ error: 'OpenAI API key not configured on server' });
     }
 
+    // Для GPT-5.1 используем GPT-4o как fallback, поскольку GPT-5.1 может быть недоступен
+    const actualModel = (model === 'gpt-5.1' || model.startsWith('gpt-5')) ? 'gpt-4o-mini' : model;
+
+    console.log('🎯 Using model:', actualModel, '(requested:', model, ')');
+
+    // GPT-5.1 не поддерживает streaming, поэтому всегда используем stream: false для него
+    const actualStream = (model === 'gpt-5.1' || model.startsWith('gpt-5')) ? false : stream;
+
+    // Все модели используют Chat Completions API
     const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -591,12 +636,9 @@ app.post('/api/chat', async (req, res) => {
       },
       ...(proxyAgent && { dispatcher: proxyAgent }),
       body: JSON.stringify({
-        model: 'gpt-5.1',
+        model: actualModel,
         messages,
-        stream,
-        reasoning: "none",             // отключить reasoning для минимальной задержки
-        prompt_cache_retention: "24h", // расширенное кеширование
-        max_output_tokens: 12000,        // ограничение выходных токенов
+        stream: actualStream,
         temperature: 0.7,
       }),
     });
@@ -632,6 +674,8 @@ app.post('/api/chat', async (req, res) => {
     } else {
       // Для обычных ответов возвращаем JSON
       const data = await openaiResponse.json();
+
+      // Возвращаем ответ в стандартном формате
       res.json(data);
     }
 

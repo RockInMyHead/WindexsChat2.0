@@ -123,7 +123,6 @@ const Chat = () => {
   // Инициализация сессии и загрузка сообщений
   useEffect(() => {
     const initializeSession = async () => {
-      console.log('initializeSession called, currentSessionId:', currentSessionId);
 
       // Проверяем, есть ли initialMessage
       const initialMessage = initialChatMessage || location.state?.initialMessage;
@@ -230,8 +229,27 @@ const Chat = () => {
 
   const sendMessage = async (messageText: string) => {
     console.log('sendMessage called with:', messageText, 'currentSessionId:', currentSessionId);
-    if (!messageText.trim() || isLoading || !currentSessionId || isSendingRef.current) {
-      console.log('sendMessage blocked:', { messageText: !!messageText.trim(), isLoading, currentSessionId, isSending: isSendingRef.current });
+    console.log('sendMessage - internetEnabled:', internetEnabled);
+    console.log('sendMessage - localStorage internet-enabled:', localStorage.getItem('windexsai-internet-enabled'));
+
+    // Если сессия не существует, создаем новую
+    if (!currentSessionId) {
+      try {
+        console.log('No session found, creating new session...');
+        const title = messageText.length > 50 ? messageText.substring(0, 47) + "..." : messageText;
+        const { sessionId } = await apiClient.createSession(title);
+        console.log('New session created with ID:', sessionId);
+        setCurrentSessionId(sessionId);
+        // Ждем немного, чтобы состояние обновилось
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error) {
+        console.error('Failed to create session:', error);
+        return;
+      }
+    }
+
+    if (!messageText.trim() || isLoading || isSendingRef.current) {
+      console.log('sendMessage blocked after session check:', { messageText: !!messageText.trim(), isLoading, currentSessionId, isSending: isSendingRef.current });
       return;
     }
 
@@ -769,7 +787,7 @@ const Chat = () => {
                   </SelectContent>
                 </Select>
                 <span className="text-[10px] sm:text-xs text-muted-foreground hidden sm:inline whitespace-nowrap">
-                  {selectedModel === "pro" ? "GPT-5.1 Pro" : "GPT-5.1 Lite"}
+                  {selectedModel === "pro" ? "GPT-5.1" : "GPT-4o Mini"}
                 </span>
               </div>
               

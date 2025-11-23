@@ -60,15 +60,29 @@ export const AuthModal = ({ isOpen, onClose, onAuthSuccess, initialMessage }: Au
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    // Проверяем обязательные поля
+    if (!registerData.name.trim()) {
+      alert("Пожалуйста, введите имя");
+      return;
+    }
+    if (!registerData.email.trim()) {
+      alert("Пожалуйста, введите email");
+      return;
+    }
+    if (!registerData.password) {
+      alert("Пожалуйста, введите пароль");
+      return;
+    }
+    if (!registerData.confirmPassword) {
+      alert("Пожалуйста, подтвердите пароль");
+      return;
+    }
+
     if (registerData.password !== registerData.confirmPassword) {
       alert("Пароли не совпадают");
       return;
     }
 
-    if (!registerData.agreeToTerms) {
-      alert("Необходимо согласиться с условиями использования");
-      return;
-    }
 
     setIsLoading(true);
 
@@ -213,6 +227,7 @@ export const AuthModal = ({ isOpen, onClose, onAuthSuccess, initialMessage }: Au
                   <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                   <Input
                     id="register-email"
+                    name="email"
                     type="email"
                     placeholder="email@example.com"
                     className="pl-10"
@@ -291,7 +306,7 @@ export const AuthModal = ({ isOpen, onClose, onAuthSuccess, initialMessage }: Au
                   <a href="#" className="text-primary hover:underline">
                     политикой конфиденциальности
                   </a>{" "}
-                  WindexsAI. Я подтверждаю, что мне исполнилось 18 лет.
+                  WindexsAI.
                 </Label>
               </div>
 

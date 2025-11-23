@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Browser Search</title>
+</head>
+<body>
+    <h1>Test Browser Search Logic</h1>
+    <button onclick="testSearch()">Test Search</button>
+    <div id="result"></div>
+
+    <script>
+        // Функция определения необходимости веб-поиска
+        const requiresWebSearch = (query) => {
+          const lowerQuery = query.toLowerCase();
+          console.log('🔍 requiresWebSearch called with query:', query, 'lowerQuery:', lowerQuery);
+
+          // Простые запросы никогда не требуют поиска
+          const isVerySimpleQuery = ['привет', 'hi', 'hello', 'здравствуй', 'здравствуйте', 'спасибо', 'благодарю', 'пока', 'до свидания', 'прощай', 'да', 'нет', 'ага', 'угу', 'хорошо', 'плохо', 'нормально', 'ок', 'окей', 'ладно', 'понятно', 'ясно', 'понял', 'хорошо'].some(simple =>
+            lowerQuery.trim() === simple ||
+            lowerQuery.trim().startsWith(simple + ' ') ||
+            lowerQuery.trim().endsWith(' ' + simple) ||
+            lowerQuery.trim().includes(' ' + simple + ' ')
+          );
+
+          const isTooShort = lowerQuery.trim().length < 3;
+          const isOnlyEmojis = /^[\p{Emoji}\s]+$/u.test(lowerQuery.trim());
+
+          if (isVerySimpleQuery || isTooShort || isOnlyEmojis) {
+            console.log('🔍 Simple query detected, no search needed');
+            return false;
+          }
+
+          // Финансовые данные
+          const financialMatch = /(курс|цена|стоимост|цены|выплат|кредит|ставка|процент|доход|налог|сбор|взнос)/i.test(lowerQuery);
+          const cryptoMatch1 = /(биткоин|доллар|евро|рубль|криптовалют|крипто|ценная бумага|акция|облигация)/i.test(lowerQuery);
+          const cryptoMatch2 = /(биткоин|биткойн)/i.test(lowerQuery);
+          const tickerMatch = /\b(btc|eth|bnb|ada|sol|dot|avax|matic|link|uni|usdc|usdt)\b/i.test(lowerQuery);
+
+          console.log('🔍 Financial checks:', { financialMatch, cryptoMatch1, cryptoMatch2, tickerMatch });
+
+          if (financialMatch || cryptoMatch1 || cryptoMatch2 || tickerMatch) {
+            console.log('🔍 requiresWebSearch: TRUE for financial/crypto query');
+            return true;
+          }
+
+          console.log('🔍 requiresWebSearch result: false for query:', query);
+          return false;
+        };
+
+        // Функция тестирования поиска
+        async function testSearch() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Testing search logic...';
+
+            const query = 'курс биткойна';
+            const needsSearch = requiresWebSearch(query);
+
+            resultDiv.innerHTML += `<br>Query: "${query}"<br>Needs search: ${needsSearch}`;
+
+            if (needsSearch) {
+                resultDiv.innerHTML += '<br>Attempting MCP search...';
+
+                try {
+                    console.log('🌐 Calling MCP API directly at:', window.location.origin + '/api/mcp/search');
+                    const mcpResponse = await fetch('/api/mcp/search', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            query: query,
+                            max_results: 2
+                        })
+                    });
+
+                    console.log('🌐 MCP fetch completed, status:', mcpResponse.status);
+
+                    if (mcpResponse.ok) {
+                        const data = await mcpResponse.json();
+                        console.log('🌐 MCP response data:', data);
+                        resultDiv.innerHTML += `<br>✅ Success! Answer: ${data.answer || 'No answer'}`;
+                    } else {
+                        const errorText = await mcpResponse.text();
+                        console.error('❌ MCP API error:', mcpResponse.status, errorText);
+                        resultDiv.innerHTML += `<br>❌ MCP API error ${mcpResponse.status}: ${errorText}`;
+                    }
+                } catch (error) {
+                    console.error('❌ Fetch error:', error);
+                    resultDiv.innerHTML += `<br>❌ Fetch error: ${error.message}`;
+                }
+            } else {
+                resultDiv.innerHTML += '<br>🚫 Search not needed';
+            }
+        }
+
+        // Auto test on load
+        window.onload = () => {
+            console.log('Browser test page loaded');
+        };
+    </script>
+</body>
+</html>

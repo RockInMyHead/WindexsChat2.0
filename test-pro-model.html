@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test PRO Model Logic</title>
+</head>
+<body>
+    <h1>Test PRO Model Two-Step Logic</h1>
+    <p>This tests the new PRO model logic: GPT-4o-mini search → GPT-5.1 analysis</p>
+
+    <input type="text" id="queryInput" placeholder="Enter query" value="какая погода в москве сегодня">
+    <button onclick="testProModel()">Test PRO Model</button>
+    <button onclick="testRegularModel()">Test Regular Model</button>
+
+    <div id="result"></div>
+
+    <script>
+        async function testProModel() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Testing PRO model logic...';
+
+            const query = document.getElementById('queryInput').value;
+
+            try {
+                console.log('🧪 Testing PRO model logic for:', query);
+
+                // Имитируем вызов sendChatMessage с моделью 'pro'
+                // ШАГ 1: Поиск с GPT-4o-mini
+                console.log('🔍 Step 1: Getting information with GPT-4o-mini');
+                const searchPrompt = `Найди актуальную информацию по запросу: "${query}". Будь максимально информативен и точен. Если это вопрос о текущих событиях, данных или фактах, предоставь свежую информацию.`;
+
+                const searchResponse = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        messages: [
+                            { role: 'system', content: 'Ты полезный AI-ассистент с доступом к актуальной информации. Отвечай максимально информативно и точно.' },
+                            { role: 'user', content: searchPrompt }
+                        ],
+                        model: 'gpt-4o-mini',
+                        stream: false
+                    })
+                });
+
+                if (!searchResponse.ok) {
+                    throw new Error(`GPT-4o-mini search failed: ${searchResponse.status}`);
+                }
+
+                const searchData = await searchResponse.json();
+                const searchResults = searchData.choices[0]?.message?.content || 'Не удалось получить информацию';
+
+                console.log('✅ Search results:', searchResults.substring(0, 200) + '...');
+                resultDiv.innerHTML += `<br><strong>Search Results:</strong><br><pre>${searchResults}</pre>`;
+
+                // ШАГ 2: Анализ с GPT-5.1 (GPT-4o-mini fallback)
+                console.log('🎯 Step 2: Analyzing with GPT-5.1');
+                const analysisResponse = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        messages: [
+                            { role: 'system', content: 'Ты продвинутый AI-ассистент. Тебе предоставлена информация, полученная из поиска. Используй эту информацию для глубокого анализа и подробного ответа на вопрос пользователя. Будь максимально полезен и информативен.' },
+                            { role: 'user', content: `Информация из поиска:\n${searchResults}\n\nВопрос пользователя: ${query}\n\nПроанализируй предоставленную информацию и дай подробный, полезный ответ.` }
+                        ],
+                        model: 'gpt-4o-mini', // Fallback for GPT-5.1
+                        stream: false
+                    })
+                });
+
+                if (!analysisResponse.ok) {
+                    throw new Error(`Analysis failed: ${analysisResponse.status}`);
+                }
+
+                const analysisData = await analysisResponse.json();
+                const finalAnswer = analysisData.choices[0]?.message?.content || 'Не удалось проанализировать';
+
+                console.log('✅ Final answer:', finalAnswer.substring(0, 200) + '...');
+                resultDiv.innerHTML += `<br><strong>Final Analysis:</strong><br><pre>${finalAnswer}</pre>`;
+
+            } catch (error) {
+                console.error('❌ Test error:', error);
+                resultDiv.innerHTML += `<br><strong>Error:</strong> ${error.message}`;
+            }
+        }
+
+        async function testRegularModel() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Testing regular model...';
+
+            const query = document.getElementById('queryInput').value;
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        messages: [{ role: 'user', content: query }],
+                        model: 'gpt-4o-mini',
+                        stream: false
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Request failed: ${response.status}`);
+                }
+
+                const data = await response.json();
+                const answer = data.choices[0]?.message?.content || 'No answer';
+
+                resultDiv.innerHTML = `<strong>Regular Model Answer:</strong><br><pre>${answer}</pre>`;
+
+            } catch (error) {
+                resultDiv.innerHTML += `<br><strong>Error:</strong> ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>
