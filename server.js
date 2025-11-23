@@ -128,10 +128,168 @@ app.get('/api/web-search', async (req, res) => {
     const lowerQuery = query.toLowerCase();
     let searchResults = '';
 
+    // 0. Поиск погоды (приоритетный запрос)
+    const isWeatherQuery = lowerQuery.includes('погод') || lowerQuery.includes('weather') || 
+        lowerQuery.includes('температур') || lowerQuery.includes('temperature') ||
+        lowerQuery.includes('метеоролог') || lowerQuery.includes('метео');
+    
+    if (isWeatherQuery) {
+      try {
+        // Извлекаем название города из запроса
+        // Паттерны: "погода в Москве", "погода Москва", "weather in Moscow"
+        let city = 'Moscow'; // По умолчанию Москва
+        let cityName = 'Москве'; // Для отображения
+        
+        // Улучшенное извлечение города
+        const patterns = [
+          /(?:погод|weather|температур|temperature).*?(?:в|in)\s+([А-Яа-яЁёA-Za-z\s-]+)/i,
+          /(?:в|in)\s+([А-Яа-яЁёA-Za-z\s-]+)/i,
+          /([А-Яа-яЁё][А-Яа-яЁё\s-]+?)(?:\s|$|,|\.|!|\?)/i
+        ];
+        
+        for (const pattern of patterns) {
+          const match = query.match(pattern);
+          if (match && match[1]) {
+            let extractedCity = match[1].trim();
+            // Убираем лишние слова
+            extractedCity = extractedCity.replace(/\s+(сегодня|сейчас|завтра|погода|weather|какая|какой)$/i, '').trim();
+            
+            if (extractedCity.length > 2) {
+              cityName = extractedCity;
+              
+              // Транслитерация русских названий городов
+              const cityMap = {
+                'москва': 'Moscow',
+                'москве': 'Moscow',
+                'москвой': 'Moscow',
+                'санкт-петербург': 'Saint Petersburg',
+                'питер': 'Saint Petersburg',
+                'новосибирск': 'Novosibirsk',
+                'екатеринбург': 'Yekaterinburg',
+                'казань': 'Kazan',
+                'нижний новгород': 'Nizhny Novgorod',
+                'челябинск': 'Chelyabinsk',
+                'самара': 'Samara',
+                'омск': 'Omsk',
+                'ростов-на-дону': 'Rostov-on-Don',
+                'уфа': 'Ufa',
+                'красноярск': 'Krasnoyarsk',
+                'воронеж': 'Voronezh',
+                'пермь': 'Perm',
+                'волгоград': 'Volgograd'
+              };
+              
+              const cityLower = extractedCity.toLowerCase();
+              if (cityMap[cityLower]) {
+                city = cityMap[cityLower];
+                break;
+              } else if (/^[A-Za-z]/.test(extractedCity)) {
+                // Если город на английском, используем как есть
+                city = extractedCity;
+                break;
+              }
+            }
+          }
+        }
+        
+        console.log('🌤️ Weather query detected, city:', city, 'cityName:', cityName);
+        
+        // Пробуем несколько источников погоды
+        let weatherFound = false;
+        
+        // 1. Пробуем DuckDuckGo Instant Answer (более надежный)
+        try {
+          const duckResponse = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(`weather ${city}`)}&format=json&no_redirect=1&no_html=1`, {
+            ...(proxyAgent && { dispatcher: proxyAgent }),
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (compatible; WindexsAI/1.0)',
+              'Accept': 'application/json'
+            }
+          });
+          
+          if (duckResponse.ok) {
+            const duckData = await duckResponse.json();
+            if (duckData.Answer) {
+              searchResults += `🌤️ Погода в ${city}:\n${duckData.Answer}\n\n`;
+              weatherFound = true;
+            }
+            if (duckData.AbstractText && !weatherFound) {
+              searchResults += `${duckData.AbstractText}\n\n`;
+              weatherFound = true;
+            }
+          }
+        } catch (duckError) {
+          console.error('DuckDuckGo weather error:', duckError);
+        }
+        
+        // 2. Если DuckDuckGo не дал результатов, пробуем wttr.in
+        if (!weatherFound) {
+          try {
+            // Используем текстовый формат - он более надежный
+            const wttrUrl = `https://wttr.in/${encodeURIComponent(city)}?format=%C+%t+%w+%h+%p&lang=ru`;
+            const weatherResponse = await fetch(wttrUrl, {
+              ...(proxyAgent && { dispatcher: proxyAgent }),
+              headers: {
+                'User-Agent': 'curl/7.68.0'
+              }
+            });
+            
+            if (weatherResponse && weatherResponse.ok) {
+              const weatherText = await weatherResponse.text();
+              if (weatherText && !weatherText.includes('Sorry') && weatherText.trim().length > 0) {
+                // Формат: "Погода Температура Ветер Влажность Давление"
+                const parts = weatherText.trim().split(/\s+/);
+                if (parts.length >= 2) {
+                  searchResults += `🌤️ Погода в ${cityName}:\n\n`;
+                  if (parts[0]) searchResults += `☁️ Условия: ${parts[0]}\n`;
+                  if (parts[1]) searchResults += `🌡️ Температура: ${parts[1]}\n`;
+                  if (parts[2]) searchResults += `💨 Ветер: ${parts[2]}\n`;
+                  if (parts[3]) searchResults += `💧 Влажность: ${parts[3]}\n`;
+                  if (parts[4]) searchResults += `🌡️ Давление: ${parts[4]}\n\n`;
+                  weatherFound = true;
+                }
+              }
+            }
+          } catch (wttrError) {
+            console.error('wttr.in weather error:', wttrError.message || wttrError);
+          }
+        }
+        
+        // Если ничего не найдено, возвращаем базовую информацию
+        if (!searchResults || searchResults.trim() === '') {
+          // Пробуем получить климатические данные из Wikipedia
+          try {
+            const wikiQuery = `Климат ${cityName}`;
+            const wikiResponse = await fetch(`https://ru.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiQuery)}`, {
+              ...(proxyAgent && { dispatcher: proxyAgent })
+            });
+            if (wikiResponse.ok) {
+              const wikiData = await wikiResponse.json();
+              if (wikiData.extract && (wikiData.extract.includes('температур') || wikiData.extract.includes('климат'))) {
+                searchResults = `Климатические данные о ${cityName}:\n${wikiData.extract.substring(0, 400)}...\n\n`;
+                searchResults += `Для получения актуальной погоды рекомендую проверить специализированные погодные сервисы: Яндекс.Погода, Gismeteo или Weather.com.`;
+              } else {
+                searchResults = `Для получения актуальной погоды в ${cityName} рекомендую проверить специализированные погодные сервисы, такие как Яндекс.Погода, Gismeteo или Weather.com.`;
+              }
+            } else {
+              searchResults = `Для получения актуальной погоды в ${cityName} рекомендую проверить специализированные погодные сервисы, такие как Яндекс.Погода, Gismeteo или Weather.com.`;
+            }
+          } catch (wikiError) {
+            console.error('Wikipedia fallback error:', wikiError);
+            searchResults = `Для получения актуальной погоды в ${cityName} рекомендую проверить специализированные погодные сервисы, такие как Яндекс.Погода, Gismeteo или Weather.com.`;
+          }
+        }
+      } catch (weatherError) {
+        console.error('Weather search error:', weatherError);
+      }
+    }
+
     // 1. Поиск курсов криптовалют (расширенная логика)
-    const isCryptoQuery = lowerQuery.includes('курс') || lowerQuery.includes('цена') || lowerQuery.includes('стоимость') ||
-        lowerQuery.includes('крипто') || lowerQuery.includes('биткоин') || lowerQuery.includes('ethereum') ||
-        lowerQuery.includes('bitcoin') || lowerQuery.includes('микро') || /\b(mbc|btc|eth)\b/i.test(lowerQuery);
+    // Нормализуем запрос для распознавания разных вариантов написания
+    const normalizedQuery = lowerQuery.replace(/биткойн/gi, 'биткоин');
+    const isCryptoQuery = normalizedQuery.includes('курс') || normalizedQuery.includes('цена') || normalizedQuery.includes('стоимость') ||
+        normalizedQuery.includes('крипто') || normalizedQuery.includes('биткоин') || normalizedQuery.includes('ethereum') ||
+        normalizedQuery.includes('bitcoin') || normalizedQuery.includes('микро') || /\b(mbc|btc|eth)\b/i.test(normalizedQuery);
 
     // Поиск курсов криптовалют
     if (isCryptoQuery) {
@@ -139,12 +297,17 @@ app.get('/api/web-search', async (req, res) => {
 
         // Известные криптовалюты
         let cryptoIds = [];
-        if (lowerQuery.includes('биткоин') || lowerQuery.includes('bitcoin') || lowerQuery.includes('btc')) cryptoIds.push('bitcoin');
-        if (lowerQuery.includes('ethereum') || lowerQuery.includes('эфир') || lowerQuery.includes('eth')) cryptoIds.push('ethereum');
+        if (normalizedQuery.includes('биткоин') || normalizedQuery.includes('bitcoin') || normalizedQuery.includes('btc') || lowerQuery.includes('btc')) cryptoIds.push('bitcoin');
+        if (normalizedQuery.includes('ethereum') || normalizedQuery.includes('эфир') || normalizedQuery.includes('eth') || lowerQuery.includes('eth')) cryptoIds.push('ethereum');
 
         // Специальные случаи
-        if (lowerQuery.includes('микро') && lowerQuery.includes('биткоин')) {
+        if (normalizedQuery.includes('микро') && normalizedQuery.includes('биткоин')) {
           cryptoIds.push('microbitcoin');
+        }
+        
+        // Если запрос содержит "курс" и не указана конкретная криптовалюта, добавляем биткоин по умолчанию
+        if (cryptoIds.length === 0 && (normalizedQuery.includes('курс') || normalizedQuery.includes('цена')) && (normalizedQuery.includes('крипто') || normalizedQuery.includes('криптовалют'))) {
+          cryptoIds.push('bitcoin');
         }
 
 
@@ -193,75 +356,53 @@ app.get('/api/web-search', async (req, res) => {
       }
     }
 
-    // 2. Поиск в DuckDuckGo Instant Answer API (пробуем русский и английский)
-    try {
-      console.log('Searching DuckDuckGo for:', query);
-
-      // Сначала пробуем оригинальный запрос
-      let instantResponse = await fetch(`https://api.duckduckgo.com/?q=${encodedQuery}&format=json&no_redirect=1&no_html=1`, {
-        ...(proxyAgent && { dispatcher: proxyAgent })
-      });
-      let instantData = null;
-
-      if (instantResponse.ok) {
-        instantData = await instantResponse.json();
-        console.log('DuckDuckGo original query data keys:', Object.keys(instantData));
-      }
-
-      // Если нет результатов и запрос на русском, пробуем перевести ключевые слова
-      if ((!instantData || !instantData.AbstractText) && lowerQuery.includes('что')) {
-        const englishQuery = query
-          .replace(/что такое/i, 'what is')
-          .replace(/кто такой/i, 'who is')
-          .replace(/где/i, 'where')
-          .replace(/как/i, 'how')
-          .replace(/почему/i, 'why')
-          .replace(/биткоин/i, 'bitcoin')
-          .replace(/крипто/i, 'crypto')
-          .replace(/javascript/i, 'javascript')
-          .replace(/программирован/i, 'programming');
-
-        console.log('Trying English query:', englishQuery);
-        const englishResponse = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(englishQuery)}&format=json&no_redirect=1&no_html=1`, {
-          ...(proxyAgent && { dispatcher: proxyAgent })
+    // 2. Все остальные запросы идут через MCP сервер
+    if (!searchResults) {
+      try {
+        console.log('🌐 All searches via MCP server for:', query);
+        const mcpResponse = await fetch('http://localhost:8002/search', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            query: query,
+            max_results: 3 // Ограничиваем количество результатов для экономии места
+          })
         });
 
-        if (englishResponse.ok) {
-          instantData = await englishResponse.json();
-          console.log('DuckDuckGo English query data keys:', Object.keys(instantData));
-        }
-      }
+        if (mcpResponse.ok) {
+          const mcpData = await mcpResponse.json();
+          console.log('🌐 MCP search successful, results:', mcpData.results ? mcpData.results.length : 0);
 
-      if (instantData) {
-        if (instantData.Answer) {
-          searchResults += `Ответ: ${instantData.Answer}\n\n`;
-        }
-        if (instantData.AbstractText) {
-          searchResults += `Информация: ${instantData.AbstractText}\n\n`;
-        }
-        if (instantData.Definition) {
-          searchResults += `Определение: ${instantData.Definition}\n\n`;
-        }
-        if (instantData.Heading) {
-          searchResults += `Тема: ${instantData.Heading}\n\n`;
-        }
-
-        // RelatedTopics
-        if (instantData.RelatedTopics && Array.isArray(instantData.RelatedTopics)) {
-          const topics = instantData.RelatedTopics.slice(0, 3);
-          if (topics.length > 0) {
-            searchResults += 'Связанная информация:\n';
-            topics.forEach((topic, index) => {
-              if (topic.Text && topic.Text.length > 10) {
-                searchResults += `${index + 1}. ${topic.Text}\n`;
-              }
+          if (mcpData.results && mcpData.results.length > 0) {
+            // Ограничиваем длину каждого результата и общее количество
+            const maxResultLength = 600; // Максимум 600 символов на результат
+            const limitedResults = mcpData.results.slice(0, 3).map((result) => {
+              const truncatedContent = result.content && result.content.length > maxResultLength
+                ? result.content.substring(0, maxResultLength) + '...'
+                : result.content;
+              return `${result.title}\n${truncatedContent}`;
             });
-            searchResults += '\n';
+
+            searchResults = limitedResults.join('\n\n');
+
+            // Если есть summary/answer от MCP, добавляем его
+            if (mcpData.answer && mcpData.answer.trim()) {
+              searchResults = `${mcpData.answer}\n\nИсточники:\n${searchResults}`;
+            }
+          } else {
+            searchResults = 'Информация не найдена.';
           }
+        } else {
+          const errorText = await mcpResponse.text();
+          console.error('❌ MCP search failed:', mcpResponse.status, errorText);
+          searchResults = 'Ошибка при поиске информации.';
         }
+      } catch (mcpError) {
+        console.error('MCP search error:', mcpError);
+        searchResults = 'Ошибка подключения к поисковой системе.';
       }
-    } catch (instantError) {
-      console.error('DuckDuckGo Instant Answer error:', instantError);
     }
 
     // 3. Поиск в Wikipedia
@@ -292,267 +433,6 @@ app.get('/api/web-search', async (req, res) => {
       console.error('Wikipedia search error:', wikiError);
     }
 
-    // 4. Поиск определений через Glosbe
-    if (lowerQuery.includes('что такое') || lowerQuery.includes('определение')) {
-      try {
-        const term = query.replace(/что такое\s+/i, '').replace(/определение\s+/i, '').trim();
-        const glosbeResponse = await fetch(`https://glosbe.com/gapi/translate?from=ru&dest=en&format=json&phrase=${encodeURIComponent(term)}`, {
-          ...(proxyAgent && { dispatcher: proxyAgent })
-        });
-
-        if (glosbeResponse.ok) {
-          const glosbeData = await glosbeResponse.json();
-          if (glosbeData.tuc && glosbeData.tuc.length > 0) {
-            searchResults += `Определения и переводы:\n`;
-            glosbeData.tuc.slice(0, 3).forEach((entry, index) => {
-              if (entry.meanings && entry.meanings.length > 0) {
-                entry.meanings.slice(0, 2).forEach((meaning) => {
-                  if (meaning.text) {
-                    searchResults += `${index + 1}. ${meaning.text}\n`;
-                  }
-                });
-              }
-            });
-            searchResults += '\n';
-          }
-        }
-      } catch (dictError) {
-        console.error('Dictionary search error:', dictError);
-      }
-    }
-
-    // 5. Специализированный поиск для данных о бизнесе/финансах/недвижимости
-    if (lowerQuery.includes('прибыл') || lowerQuery.includes('доход') || lowerQuery.includes('выручк') ||
-        lowerQuery.includes('продаж') || lowerQuery.includes('бизнес') || lowerQuery.includes('кофе') ||
-        lowerQuery.includes('недвижимост') || lowerQuery.includes('квартир') || lowerQuery.includes('жил') ||
-        lowerQuery.includes('дом') || lowerQuery.includes('рынок недвижимост')) {
-
-      console.log('Business data search for:', query);
-
-      // Поиск в Google через поисковые запросы
-      try {
-        // Ищем конкретную статистику о бизнесе/недвижимости в России/Москве с реальными цифрами
-        const businessQueries = lowerQuery.includes('недвижимост') || lowerQuery.includes('квартир') || lowerQuery.includes('жил') ? [
-          'продажи квартир москва 2024 год количество',
-          'средняя цена квартиры москва 2024 млн рублей',
-          'динамика продаж недвижимости москва 2024',
-          'рынок жилой недвижимости москва 2024 отчет',
-          'статистика продаж квартир москва 2024 конкретные цифры',
-          'цены на жилье москва 2024 год точные данные',
-          'оборот рынка недвижимости москва 2024 млн руб',
-          'анализ рынка жилья москва 2024 процент',
-          'продажи домов москва 2024 млрд рублей',
-          'финансовый анализ недвижимости москва 2024 год отчеты',
-          'количество сделок недвижимость москва 2024 тыс',
-          'средняя стоимость жилья москва 2024 цифры',
-          'рост цен на квартиры москва 2024 млн',
-          'спрос на недвижимость москва 2024 процент',
-          'экономика рынка жилья россия 2024 статистические данные'
-        ] : [
-          'средняя прибыль кофейни москва 2024 год цифры',
-          'выручка кофеен москва за 2024 год млн рублей',
-          'финансовые показатели кофеен россия 2024 отчет',
-          'отчет о рынке кофеен москва 2024 год данные',
-          'статистика прибыли кафе россия 2024 конкретные цифры',
-          'доходы кофеен москва 2024 год точные данные',
-          'издержки кофейного бизнеса россия 2024 млн руб',
-          'рентабельность кофеен москва 2024 процент',
-          'оборот рынка кофеен россия 2024 млрд рублей',
-          'финансовый анализ кофеен москва 2024 год отчеты',
-          'прибыль кофейни москва средняя 2024 тыс руб',
-          'выручка кафе москва годовая 2024 цифры',
-          'затраты кофейного бизнеса россия 2024 млн',
-          'доходность кофеен москва 2024 процент рентабельности',
-          'экономика кофейного рынка россия 2024 статистические данные'
-        ];
-
-        for (const businessQuery of businessQueries) {
-          try {
-            const businessSearch = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(businessQuery)}&format=json&no_html=1&skip_disambig=1`, {
-              ...(proxyAgent && { dispatcher: proxyAgent })
-            });
-            if (businessSearch.ok) {
-              const data = await businessSearch.json();
-              console.log(`Business search results for "${businessQuery}":`, data.AbstractText);
-
-              if (data.AbstractText && data.AbstractText.length > 20) {
-                searchResults += `Данные о рынке кофеен (${businessQuery}):\n`;
-                searchResults += `${data.AbstractText}\n\n`;
-              }
-
-              if (data.Answer && data.Answer.length > 10) {
-                searchResults += `Ответ: ${data.Answer}\n\n`;
-              }
-            }
-          } catch (queryError) {
-            console.error('Business query error:', queryError);
-          }
-        }
-
-        // Поиск в официальных источниках статистики
-        try {
-          // Попытка найти данные из Росстата через поиск
-          const officialQueries = lowerQuery.includes('недвижимост') || lowerQuery.includes('квартир') || lowerQuery.includes('жил') ? [
-            'росстат данные о рынке недвижимости 2024',
-            'статистика продаж квартир москва 2024',
-            'официальные данные о ценах на жилье россия',
-            'госкомстат недвижимость москва 2024 год',
-            'федеральная служба государственной регистрации кадастра недвижимости статистика 2024',
-            'минстрой рф данные о рынке жилья 2024'
-          ] : [
-            'росстат данные о общественном питании 2024',
-            'статистика кафе и ресторанов москва 2024',
-            'официальные данные о прибыли предприятий питания россия',
-            'госкомстат общепит москва 2024 год'
-          ];
-
-          for (const officialQuery of officialQueries) {
-            try {
-              const officialSearch = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(officialQuery)}&format=json&no_html=1&skip_disambig=1`, {
-                ...(proxyAgent && { dispatcher: proxyAgent })
-              });
-              if (officialSearch.ok) {
-                const data = await officialSearch.json();
-                if (data.AbstractText && data.AbstractText.length > 50) {
-                  searchResults += `Официальная статистика (${officialQuery}):\n`;
-                  searchResults += `${data.AbstractText}\n\n`;
-                }
-              }
-            } catch (queryError) {
-              console.error('Official stats query error:', queryError);
-            }
-          }
-        } catch (officialError) {
-          console.error('Official statistics search error:', officialError);
-        }
-
-        // Дополнительный поиск в Wikipedia для бизнес-статистики
-        try {
-          const wikiQueries = lowerQuery.includes('недвижимост') || lowerQuery.includes('квартир') || lowerQuery.includes('жил') ? [
-            'Недвижимость в России', 'Рынок недвижимости Москвы', 'Жилищное строительство в России', 'Цены на жилье в Москве'
-          ] : [
-            'Кофейня', 'Рынок кофе в России', 'Кофеиндустрия', 'Кофе в России', 'Общественное питание в России'
-          ];
-          for (const wikiQuery of wikiQueries) {
-            const wikiResponse = await fetch(`https://ru.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiQuery)}`, {
-              ...(proxyAgent && { dispatcher: proxyAgent })
-            });
-            if (wikiResponse.ok) {
-              const wikiData = await wikiResponse.json();
-              if (wikiData.extract && (
-                (lowerQuery.includes('недвижимост') || lowerQuery.includes('квартир') || lowerQuery.includes('жил')) ?
-                  (wikiData.extract.includes('недвижимост') || wikiData.extract.includes('жил') || wikiData.extract.includes('квартир') || wikiData.extract.includes('рынок')) :
-                  (wikiData.extract.includes('кофе') || wikiData.extract.includes('рынок') || wikiData.extract.includes('питани'))
-              )) {
-                // Ищем числовые данные в тексте
-                const numbersFound = wikiData.extract.match(/\d{1,3}(?:[.,]\d{3})*(?:\s*(?:тыс\.?|млн\.?|млрд\.?)?\s*руб\.?|\s*рублей?|\s*\%)/gi);
-                if (numbersFound && numbersFound.length > 0) {
-                  searchResults += `Из Wikipedia (${wikiQuery}) - найдены данные:\n`;
-                  searchResults += `${numbersFound.join(', ')}\n`;
-                  searchResults += `${wikiData.extract.substring(0, 300)}...\n\n`;
-                }
-              }
-            }
-          }
-        } catch (wikiError) {
-          console.error('Wikipedia business search error:', wikiError);
-        }
-
-        // Поиск в англоязычной Wikipedia для дополнительных данных
-        try {
-          const enWikiQueries = ['Coffeehouse', 'Coffee industry in Russia', 'Coffee market', 'Foodservice industry in Russia'];
-          for (const wikiQuery of enWikiQueries) {
-            const wikiResponse = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiQuery)}`, {
-              ...(proxyAgent && { dispatcher: proxyAgent })
-            });
-            if (wikiResponse.ok) {
-              const wikiData = await wikiResponse.json();
-              if (wikiData.extract && (wikiData.extract.includes('Russia') || wikiData.extract.includes('market') || wikiData.extract.includes('coffee'))) {
-                // Ищем числовые данные в англоязычном тексте
-                const numbersFound = wikiData.extract.match(/\d{1,3}(?:[,.]\d{3})*(?:\s*(?:thousand|million|billion)?\s*(?:rubles?|USD|\$|€|%|percent))/gi);
-                if (numbersFound && numbersFound.length > 0) {
-                  searchResults += `From English Wikipedia (${wikiQuery}) - found data:\n`;
-                  searchResults += `${numbersFound.join(', ')}\n`;
-                  searchResults += `${wikiData.extract.substring(0, 300)}...\n\n`;
-                }
-              }
-            }
-          }
-        } catch (enWikiError) {
-          console.error('English Wikipedia business search error:', enWikiError);
-        }
-      } catch (businessError) {
-        console.error('Business data search error:', businessError);
-      }
-    }
-
-    // 7. Поиск новостей через NewsAPI (демо версия)
-    if (lowerQuery.includes('новост') || lowerQuery.includes('событи') ||
-        (lowerQuery.includes('бизнес') || lowerQuery.includes('рынок'))) {
-      try {
-        // Для бизнес-запросов ищем бизнес-новости
-        const searchQuery = lowerQuery.includes('бизнес') || lowerQuery.includes('рынок') || lowerQuery.includes('кофе')
-          ? `${encodedQuery} бизнес россия`
-          : encodedQuery;
-
-        const newsResponse = await fetch(`https://newsapi.org/v2/everything?q=${searchQuery}&language=ru&sortBy=publishedAt&pageSize=5&apiKey=demo`, {
-          ...(proxyAgent && { dispatcher: proxyAgent })
-        });
-        if (newsResponse.ok) {
-          const newsData = await newsResponse.json();
-          if (newsData.articles && newsData.articles.length > 0) {
-            searchResults += `Новости и аналитика:\n`;
-            newsData.articles.slice(0, 3).forEach((article, index) => {
-              if (article.title && (article.title.toLowerCase().includes('кофе') ||
-                  article.title.toLowerCase().includes('бизнес') ||
-                  article.title.toLowerCase().includes('рынок') ||
-                  article.title.toLowerCase().includes('прибыл') ||
-                  article.title.toLowerCase().includes('выручк') ||
-                  article.title.toLowerCase().includes('статистик'))) {
-                searchResults += `${index + 1}. ${article.title}\n`;
-                if (article.description) {
-                  // Ищем числовые данные в описании новости
-                  const numbersInDesc = article.description.match(/\d{1,3}(?:[.,]\d{3})*(?:\s*(?:тыс\.?|млн\.?|млрд\.?)?\s*руб\.?|\s*рублей?|\s*\%)/gi);
-                  if (numbersInDesc && numbersInDesc.length > 0) {
-                    searchResults += `   Найденные данные: ${numbersInDesc.join(', ')}\n`;
-                  }
-                  searchResults += `   ${article.description.substring(0, 150)}...\n`;
-                }
-                searchResults += `   Источник: ${article.source.name}\n\n`;
-              }
-            });
-          }
-        }
-      } catch (newsError) {
-        console.error('News API error:', newsError);
-      }
-    }
-
-    // 6. Технические вопросы через Stack Exchange
-    if (lowerQuery.includes('как') || lowerQuery.includes('почему') || lowerQuery.includes('ошибк') || lowerQuery.includes('программировани')) {
-      try {
-        const stackResponse = await fetch(`https://api.stackexchange.com/2.3/search?order=desc&sort=relevance&tagged=javascript&intitle=${encodedQuery}&site=stackoverflow`, {
-          ...(proxyAgent && { dispatcher: proxyAgent })
-        });
-        if (stackResponse.ok) {
-          const stackData = await stackResponse.json();
-          if (stackData.items && stackData.items.length > 0) {
-            searchResults += `Из Stack Overflow:\n`;
-            stackData.items.slice(0, 2).forEach((item, index) => {
-              if (item.title) {
-                searchResults += `${index + 1}. ${item.title}\n`;
-                if (item.tags && item.tags.length > 0) {
-                  searchResults += `   Теги: ${item.tags.slice(0, 3).join(', ')}\n`;
-                }
-                searchResults += `   Ссылка: https://stackoverflow.com/questions/${item.question_id}\n\n`;
-              }
-            });
-          }
-        }
-      } catch (stackError) {
-        console.error('Stack Exchange error:', stackError);
-      }
-    }
 
     // Возвращаем результаты или сообщение об отсутствии результатов
     const finalResult = searchResults || '[NO_RESULTS_FOUND]';
@@ -691,6 +571,23 @@ app.post('/api/chat', async (req, res) => {
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Test endpoint for context checking
+app.post('/api/test-context', (req, res) => {
+  const { messages } = req.body;
+  console.log('🧪 Test context endpoint called');
+  console.log('📜 Received messages:', messages?.length || 0);
+  if (messages) {
+    messages.forEach((msg, i) => {
+      console.log(`  ${i}: ${msg.role} - ${msg.content?.substring(0, 100)}${msg.content?.length > 100 ? '...' : ''}`);
+    });
+  }
+  res.json({
+    status: 'ok',
+    messageCount: messages?.length || 0,
+    messages: messages
+  });
 });
 
 // Serve static files from dist directory

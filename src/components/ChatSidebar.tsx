@@ -173,7 +173,8 @@ export function ChatSidebar({ onSelectChat, currentSessionId, refreshTrigger, on
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <div className="mt-auto p-2 border-t border-border">
+        {/* Личный кабинет - всегда внизу */}
+        <div className="sticky bottom-0 p-2 border-t border-border bg-background">
           <SidebarMenuButton asChild>
             <NavLink
               to="/profile"

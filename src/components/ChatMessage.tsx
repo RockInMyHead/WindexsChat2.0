@@ -160,36 +160,88 @@ const executePython = async (code: string): Promise<string> => {
     // Очищаем предыдущий вывод
     await pyodide.runPythonAsync('sys.stdout.output.clear(); sys.stderr.output.clear()');
 
-    // Выполняем код и получаем результат
-    const result = await pyodide.runPythonAsync(code);
+    try {
+      // Выполняем код и получаем результат
+      const result = await pyodide.runPythonAsync(code);
 
-    // Получаем вывод из stdout и stderr
-    const stdout = await pyodide.runPythonAsync('sys.stdout.get_output()');
-    const stderr = await pyodide.runPythonAsync('sys.stderr.get_output()');
+      // Получаем вывод из stdout и stderr
+      const stdout = await pyodide.runPythonAsync('sys.stdout.get_output()');
+      const stderr = await pyodide.runPythonAsync('sys.stderr.get_output()');
 
-    // Формируем итоговый вывод
-    let finalOutput = '';
+      // Формируем итоговый вывод
+      let finalOutput = '';
 
-    if (stdout && stdout.trim()) {
-      finalOutput += stdout;
+      if (stdout && stdout.trim()) {
+        finalOutput += stdout;
+      }
+
+      if (stderr && stderr.trim()) {
+        if (finalOutput) finalOutput += '\n';
+        finalOutput += 'STDERR:\n' + stderr;
+      }
+
+      // Если есть возвращаемое значение и нет вывода, показываем результат
+      if (result !== undefined && result !== null && !finalOutput.trim()) {
+        finalOutput = 'Result: ' + String(result);
+      }
+
+      // Если есть возвращаемое значение и есть вывод, добавляем результат
+      if (result !== undefined && result !== null && finalOutput.trim()) {
+        finalOutput += '\n\nResult: ' + String(result);
+      }
+
+      return finalOutput || 'Код выполнен успешно (без вывода)';
+    } catch (firstError: any) {
+      // Проверяем, является ли ошибка отсутствием модуля
+      const errorMessage = firstError.message || String(firstError);
+      console.log('Python execution error:', errorMessage);
+
+      if (errorMessage.includes("ModuleNotFoundError") ||
+          errorMessage.includes("not installed") ||
+          (errorMessage.includes("module") && errorMessage.includes("not installed"))) {
+
+        // Ищем название модуля разными способами
+        let moduleMatch = errorMessage.match(/No module named '(\w+)'/);
+        if (!moduleMatch) {
+          moduleMatch = errorMessage.match(/module '(\w+)' is not installed/);
+        }
+        if (!moduleMatch) {
+          moduleMatch = errorMessage.match(/The module '(\w+)' is included/);
+        }
+
+        if (moduleMatch) {
+          const missingModule = moduleMatch[1];
+          console.log('Installing missing module:', missingModule);
+
+          try {
+            // Пытаемся установить отсутствующий модуль с помощью pyodide.loadPackage
+            console.log('Installing package:', missingModule);
+            await pyodide.loadPackage(missingModule);
+            console.log('Package installed successfully, retrying execution');
+
+            // Повторяем выполнение кода после установки модуля
+            return await executePython(code);
+          } catch (installError) {
+            console.error('Failed to install package:', installError);
+            // Если pyodide.loadPackage не сработал, попробуем micropip
+            try {
+              console.log('Trying micropip as fallback...');
+              await pyodide.runPythonAsync(`
+import micropip
+await micropip.install("${missingModule}")
+`);
+              console.log('Package installed via micropip successfully');
+              return await executePython(code);
+            } catch (micropipError) {
+              console.error('Failed to install via micropip too:', micropipError);
+              throw new Error(`Не удалось установить модуль ${missingModule}: ${installError}`);
+            }
+          }
+        }
+      }
+      // Если это не ошибка отсутствия модуля, выбрасываем оригинальную ошибку
+      throw firstError;
     }
-
-    if (stderr && stderr.trim()) {
-      if (finalOutput) finalOutput += '\n';
-      finalOutput += 'STDERR:\n' + stderr;
-    }
-
-    // Если есть возвращаемое значение и нет вывода, показываем результат
-    if (result !== undefined && result !== null && !finalOutput.trim()) {
-      finalOutput = 'Result: ' + String(result);
-    }
-
-    // Если есть возвращаемое значение и есть вывод, добавляем результат
-    if (result !== undefined && result !== null && finalOutput.trim()) {
-      finalOutput += '\n\nResult: ' + String(result);
-    }
-
-    return finalOutput || 'Код выполнен успешно (без вывода)';
   } catch (error) {
     throw new Error(`Ошибка выполнения Python: ${error}`);
   }
@@ -312,8 +364,8 @@ const CodeBlock = ({ code, language }: { code: string; language?: string }) => {
                   onClick={executeCode}
                   title="Выполнить код"
                 >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h1.586a1 1 0 01.707.293l.707.707A1 1 0 0012.414 11H15m-3 7.5A9.5 9.5 0 1121.5 12 9.5 9.5 0 0112 2.5z" />
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z"/>
                   </svg>
                 </button>
               )}

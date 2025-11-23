@@ -65,11 +65,15 @@ const searchWeb = async (query: string): Promise<string> => {
         console.log('🔍 MCP search successful, results:', mcpData.results ? mcpData.results.length : 0);
 
         if (mcpData.results && mcpData.results.length > 0) {
-          // Форматируем результаты MCP для совместимости
-          const formattedResults = mcpData.results.map((result: any) =>
-            `${result.title}\n${result.content}\nИсточник: ${result.url}`
-          ).join('\n\n');
-          console.log('🔍 Using MCP results, length:', formattedResults.length);
+          // Форматируем результаты MCP для совместимости и ограничиваем размер
+          const maxResultLength = 800; // Максимум 800 символов на результат
+          const formattedResults = mcpData.results.slice(0, 5).map((result: any) => { // Максимум 5 результатов
+            const truncatedContent = result.content && result.content.length > maxResultLength
+              ? result.content.substring(0, maxResultLength) + '...'
+              : result.content;
+            return `${result.title}\n${truncatedContent}`;
+          }).join('\n\n');
+          console.log('🔍 Using MCP results, length:', formattedResults.length, 'results count:', mcpData.results.slice(0, 5).length);
           return formattedResults;
         } else {
           console.log('🔍 MCP search returned no results');
@@ -118,11 +122,18 @@ const searchWebFallback = async (query: string): Promise<string> => {
     let searchResults = '';
 
     // 1. Специальная обработка для запросов о курсах криптовалют
-    if (lowerQuery.includes('курс') && (lowerQuery.includes('биткоин') || lowerQuery.includes('крипто') || lowerQuery.includes('bitcoin') || lowerQuery.includes('ethereum'))) {
+    // Нормализуем запрос для распознавания разных вариантов написания
+    const normalizedQuery = lowerQuery.replace(/биткойн/gi, 'биткоин');
+    if (normalizedQuery.includes('курс') && (normalizedQuery.includes('биткоин') || normalizedQuery.includes('крипто') || normalizedQuery.includes('bitcoin') || normalizedQuery.includes('ethereum'))) {
       try {
         const cryptoIds = [];
-        if (lowerQuery.includes('биткоин') || lowerQuery.includes('bitcoin')) cryptoIds.push('bitcoin');
-        if (lowerQuery.includes('ethereum') || lowerQuery.includes('эфир')) cryptoIds.push('ethereum');
+        if (normalizedQuery.includes('биткоин') || normalizedQuery.includes('bitcoin') || lowerQuery.includes('btc')) cryptoIds.push('bitcoin');
+        if (normalizedQuery.includes('ethereum') || normalizedQuery.includes('эфир') || lowerQuery.includes('eth')) cryptoIds.push('ethereum');
+        
+        // Если запрос содержит "курс" и не указана конкретная криптовалюта, добавляем биткоин по умолчанию
+        if (cryptoIds.length === 0 && normalizedQuery.includes('курс') && (normalizedQuery.includes('крипто') || normalizedQuery.includes('криптовалют'))) {
+          cryptoIds.push('bitcoin');
+        }
 
         if (cryptoIds.length > 0) {
           const cryptoResponse = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${cryptoIds.join(',')}&vs_currencies=usd,rub,eur`);
@@ -444,7 +455,7 @@ const requiresWebSearch = (query: string): boolean => {
 
   // 2. ФИНАНСОВЫЕ ДАННЫЕ И ЦЕНЫ
   const financialMatch = /(курс|цена|стоимост|цены|выплат|кредит|ставка|процент|доход|налог|сбор|взнос)/i.test(lowerQuery);
-  const cryptoMatch1 = /(биткоин|доллар|евро|рубль|криптовалют|крипто|ценная бумага|акция|облигация)/i.test(lowerQuery);
+  const cryptoMatch1 = /(биткоин|биткойн|доллар|евро|рубль|криптовалют|крипто|ценная бумага|акция|облигация)/i.test(lowerQuery);
   const cryptoMatch2 = /(биткоин|биткойн)/i.test(lowerQuery);
   const tickerMatch = /\b(btc|eth|bnb|ada|sol|dot|avax|matic|link|uni|usdc|usdt)\b/i.test(lowerQuery);
 
@@ -560,63 +571,244 @@ export interface PlanStep {
 }
 
 // СПЕЦИАЛЬНАЯ ФУНКЦИЯ ДЛЯ МОДЕЛИ PRO
-const handleProModelLogic = async (
+const handleAdvancedModelLogic = async (
   messages: Message[],
   userMessage: Message,
+  selectedModel: string,
   abortSignal?: AbortSignal,
-  onChunk?: (chunk: string) => void
+  onChunk?: (chunk: string) => void,
+  onPlanGenerated?: (plan: PlanStep[]) => void,
+  onStepStart?: (stepIndex: number, step: PlanStep) => void,
+  onSearchProgress?: (queries: string[]) => void,
+  internetEnabled?: boolean
 ): Promise<string> => {
-  console.log('🎯 Using PRO model logic: MCP search + GPT-4o-mini analysis');
+  console.log('🎯 Using ADVANCED model logic for:', selectedModel, 'with internet:', internetEnabled);
 
-  // ШАГ 1: Получаем информацию через MCP поиск
-  console.log('🔍 Step 1: Getting information via MCP search');
-  const searchResults = await searchWeb(userMessage.content);
-  console.log('✅ Search results from MCP:', searchResults.substring(0, 200) + '...');
+  // ШАГ 1: Генерируем план выполнения задачи
+  console.log('📋 Step 1: Generating response plan');
+  let plan: PlanStep[] = [];
+  try {
+    plan = await generateResponsePlan(userMessage.content, selectedModel);
+    console.log('✅ Plan generated:', plan.length, 'steps');
 
-  // ШАГ 2: Передаем результаты MCP поиска GPT-4o-mini для анализа
-  console.log('🎯 Step 2: Analyzing MCP results with GPT-4o-mini');
-  const analysisMessages = [
+    // Отправляем план в UI
+    if (onPlanGenerated) {
+      onPlanGenerated(plan);
+    }
+  } catch (error) {
+    console.error('❌ Failed to generate plan:', error);
+
+    // Проверяем, является ли ошибка гео-ограничением
+    const isGeoBlocked = error.message.includes('unsupported_country_region_territory') ||
+                        error.message.includes('Country, region, or territory not supported') ||
+                        error.message.includes('403 Forbidden');
+
+    if (isGeoBlocked) {
+      console.log('🌍 Geo-blocking detected, falling back to basic mode without planning');
+      if (onChunk) {
+        onChunk("🌍 Обнаружено гео-ограничение OpenAI. Регион не поддерживается для продвинутых функций. Переключаюсь в обычный режим...\n\n");
+      }
+    } else {
+      if (onChunk) {
+        onChunk("⚠️ Планирование не удалось, продолжаю с прямым анализом...\n\n");
+      }
+    }
+
+    // Продолжаем без плана
+    plan = [];
+  }
+
+  // ШАГ 2: Выполняем поиск в интернете если план требует этого
+  let searchResults = '';
+  if (plan.some(step => step.searchQueries && step.searchQueries.length > 0) && internetEnabled !== false) {
+    console.log('🔍 Step 2: Executing internet search for plan');
+
+    try {
+      // Собираем все поисковые запросы
+      const allSearchQueries = plan.flatMap(step =>
+        step.searchQueries ? step.searchQueries.map(sq => ({ query: sq.query, purpose: sq.purpose })) : []
+      );
+
+      console.log('📊 Total search queries:', allSearchQueries.length);
+      if (onSearchProgress) {
+        onSearchProgress(allSearchQueries.map(sq => sq.query));
+      }
+
+      // Выполняем параллельный поиск
+      const allSearchResults = await executeParallelSearches(plan, onSearchProgress);
+
+      // Форматируем результаты поиска по шагам
+      let searchContext = '';
+      if (allSearchResults.size > 0) {
+        searchContext = 'ДАННЫЕ ИЗ ИНТЕРНЕТА:\n\n';
+
+        plan.forEach((step, stepIndex) => {
+          if (step.searchQueries && step.searchQueries.length > 0) {
+            searchContext += `📌 Шаг ${stepIndex + 1}: ${step.step}\n`;
+
+            step.searchQueries.forEach((sq) => {
+              const key = `${sq.query}||[Шаг ${stepIndex + 1}: ${step.step}] ${sq.purpose}`;
+              const result = allSearchResults.get(key);
+
+              if (result && result !== '[NO_RESULTS_FOUND]') {
+                searchContext += `\n🔹 ${sq.purpose} (${sq.query}):\n${result}\n`;
+              }
+            });
+
+            searchContext += '\n';
+          }
+        });
+
+        // Ограничиваем размер результатов поиска
+        const maxSearchLength = selectedModel === 'pro' ? 15000 : 8000;
+        searchResults = searchContext.length > maxSearchLength
+          ? searchContext.substring(0, maxSearchLength) + '\n\n[Результаты поиска сокращены для эффективности]'
+          : searchContext;
+      }
+
+      console.log('✅ Search completed, results length:', searchResults.length);
+
+      // Уведомляем UI о начале каждого шага
+      plan.forEach((step, stepIndex) => {
+        if (onStepStart) {
+          setTimeout(() => onStepStart(stepIndex, step), stepIndex * 500);
+        }
+      });
+
+    } catch (searchError) {
+      console.error('❌ Error during internet search:', searchError);
+      searchResults = '[Ошибка поиска в интернете]';
+    }
+  } else {
+    console.log('🚫 No internet search needed for this query');
+  }
+
+  // ШАГ 3: Генерируем финальный ответ
+  console.log('🎯 Step 3: Generating final answer');
+
+  const actualModel = getActualModel(selectedModel);
+  const modelParams = getModelParams(selectedModel);
+
+  // Формируем системное сообщение
+  let systemPrompt: string;
+
+  console.log('🎯 Building system prompt for plan length:', plan.length);
+
+  if (plan.length > 0) {
+    // Если есть план - используем продвинутый промпт с планом
+    systemPrompt = `Ты - WindexsAI, продвинутый ИИ-ассистент. У тебя есть план выполнения задачи и результаты поиска в интернете.
+
+ПЛАН ВЫПОЛНЕНИЯ:
+${plan.map((step, idx) => `${idx + 1}. ${step.description}${step.searchQueries ? ` (Поиск: ${step.searchQueries.map(sq => `"${sq.query}"`).join(', ')})` : ''}`).join('\n')}
+
+ВАЖНЫЕ ИНСТРУКЦИИ:
+1. ДАЙ МАКСИМАЛЬНО ПОДРОБНЫЙ И ОБЪЕМНЫЙ ОТВЕТ
+2. ПОЛНОСТЬЮ ОБЗОРЬ ЗАПРОШЕННУЮ ТЕМУ - охвати все аспекты
+3. КАЖДЫЙ ПУНКТ РАСПИСЫВАЙ ПОДРОБНО С ПРИМЕРАМИ И ОБЪЯСНЕНИЯМИ
+4. ЕСЛИ ПОЛЬЗОВАТЕЛЬ ОБРАТИЛСЯ С ПРОБЛЕМОЙ - ПРЕДЛОЖИ НЕСКОЛЬКО ВАРИАНТОВ РЕШЕНИЙ С ПОДРОБНЫМ ОПИСАНИЕМ КАЖДОГО
+5. ИСПОЛЬЗУЙ ВСЮ ДОСТУПНУЮ ИНФОРМАЦИЮ ИЗ ПОИСКА
+6. СТРУКТУРИРУЙ ОТВЕТ С ЗАГОЛОВКАМИ, СПИСКАМИ И ПОДПУНКТАМИ
+7. ДАЙ ПРАКТИЧЕСКИЕ СОВЕТЫ И РЕКОМЕНДАЦИИ
+8. ВКЛЮЧИ СТАТИСТИКУ, ФАКТЫ И ПРИМЕРЫ ГДЕ ВОЗМОЖНО
+
+На основе этого плана и предоставленной информации из интернета дай МАКСИМАЛЬНО ПОДРОБНЫЙ, ОБЪЕМНЫЙ И ПОЛЕЗНЫЙ ответ на вопрос пользователя.`;
+  } else {
+    // Если плана нет - используем обычный продвинутый промпт
+    systemPrompt = `Ты - WindexsAI, продвинутый ИИ-ассистент. Тебе предоставлена актуальная информация из интернета.
+
+ВАЖНЫЕ ИНСТРУКЦИИ ДЛЯ ОТВЕТОВ:
+1. ДАЙ МАКСИМАЛЬНО ПОДРОБНЫЙ И ОБЪЕМНЫЙ ОТВЕТ
+2. ПОЛНОСТЬЮ ОБЗОРЬ ЗАПРОШЕННУЮ ТЕМУ - охвати все важные аспекты
+3. КАЖДЫЙ ПУНКТ РАСПИСЫВАЙ ПОДРОБНО С ПРИМЕРАМИ И ОБЪЯСНЕНИЯМИ
+4. ЕСЛИ ПОЛЬЗОВАТЕЛЬ ОБРАТИЛСЯ С ПРОБЛЕМОЙ - ПРЕДЛОЖИ НЕСКОЛЬКО ВАРИАНТОВ РЕШЕНИЙ С ПОДРОБНЫМ ОПИСАНИЕМ КАЖДОГО
+5. ИСПОЛЬЗУЙ ВСЮ ДОСТУПНУЮ ИНФОРМАЦИЮ ИЗ ПОИСКА
+6. СТРУКТУРИРУЙ ОТВЕТ С ЗАГОЛОВКАМИ, СПИСКАМИ И ПОДПУНКТАМИ
+7. ДАЙ ПРАКТИЧЕСКИЕ СОВЕТЫ И РЕКОМЕНДАЦИИ
+8. ВКЛЮЧИ СТАТИСТИКУ, ФАКТЫ И ПРИМЕРЫ ГДЕ ВОЗМОЖНО
+
+Дай полный и максимально подробный ответ на вопрос пользователя.`;
+  }
+
+  // Формируем сообщения для финального запроса
+  const finalMessages = [
     {
       role: 'system',
-      content: 'Ты продвинутый AI-ассистент. Тебе предоставлена актуальная информация, полученная из поиска в интернете. Проанализируй эту информацию и дай подробный, полезный ответ на вопрос пользователя. Используй только предоставленные данные для ответа.'
+      content: systemPrompt
     },
+    // Включаем предыдущую историю чата
+    ...messages.slice(0, -1),
+    // Финальный запрос с результатами поиска
     {
       role: 'user',
-      content: `Актуальная информация из интернета:\n${searchResults}\n\nВопрос пользователя: ${userMessage.content}\n\nНа основе предоставленной информации дай полный и точный ответ на вопрос.`
+      content: searchResults
+        ? `${userMessage.content}\n\nИНФОРМАЦИЯ ИЗ ИНТЕРНЕТА:\n${searchResults}`
+        : userMessage.content
     }
   ];
 
-  const analysisResponse = await fetch(`${API_BASE_URL}/chat`, {
+  console.log('📤 Final request messages count:', finalMessages.length);
+  console.log('🎯 System prompt length:', systemPrompt.length);
+  console.log('🔍 Search results length:', searchResults.length);
+
+  // Отправляем финальный запрос к API
+  const response = await fetch(`${API_BASE_URL}/chat`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      messages: analysisMessages,
-      model: 'gpt-4o-mini',
-      stream: false,
+      messages: finalMessages,
+      model: actualModel,
+      stream: true,
+      ...modelParams,
     }),
     signal: abortSignal,
   });
 
-  if (!analysisResponse.ok) {
-    throw new Error(`GPT-5.1 analysis failed: ${analysisResponse.status}`);
+  if (!response.ok) {
+    throw new Error(`API request failed: ${response.status}`);
   }
 
-  const analysisData = await analysisResponse.json();
-  const finalAnswer = analysisData.choices[0]?.message?.content || 'Не удалось проанализировать информацию';
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error('Failed to get response reader');
+  }
 
-  console.log('✅ Final answer from GPT-5.1 analysis:', finalAnswer.substring(0, 200) + '...');
+  const decoder = new TextDecoder();
+  let fullResponse = '';
+  let buffer = '';
 
-  // Имитируем потоковую передачу для совместимости с UI
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const data = line.slice(6);
+        if (data === '[DONE]') continue;
+
+        try {
+          const parsed = JSON.parse(data);
+          const content = parsed.choices?.[0]?.delta?.content;
+          if (content) {
+            fullResponse += content;
   if (onChunk) {
-    for (const char of finalAnswer) {
-      onChunk(char);
-      await new Promise(resolve => setTimeout(resolve, 10));
+              onChunk(content);
+            }
+          }
+        } catch (e) {
+          console.error('Error parsing SSE data:', e);
+        }
+      }
     }
   }
 
-  return finalAnswer;
+  console.log('✅ Final answer completed, length:', fullResponse.length);
+  return fullResponse;
 };
 
 // Функция для обработки простых запросов без поиска
@@ -703,15 +895,16 @@ export const sendChatMessage = async (
   abortSignal?: AbortSignal
 ): Promise<string> => {
   console.log('🚀 sendChatMessage called with model:', selectedModel, 'message count:', messages.length, 'internetEnabled:', internetEnabled);
+  console.log('📜 Full messages array:', messages.map((msg, i) => `${i}: ${msg.role} - ${msg.content.substring(0, 50)}${msg.content.length > 50 ? '...' : ''}`));
 
   const userMessage = messages[messages.length - 1];
   console.log('👤 User message:', userMessage?.content);
   console.log('🔍 selectedModel check:', selectedModel, '=== "pro"?', selectedModel === 'pro');
 
-  // СПЕЦИАЛЬНАЯ ЛОГИКА ДЛЯ МОДЕЛИ PRO (GPT-5.1) - выносим выше для надежности
-  if (selectedModel === 'pro') {
-    console.log('🎯 EARLY PRO model logic activated!');
-    return handleProModelLogic(messages, userMessage, abortSignal, onChunk);
+  // СПЕЦИАЛЬНАЯ ЛОГИКА ДЛЯ ПРОДВИНУТЫХ МОДЕЛЕЙ (Pro или Lite с интернетом)
+  if (selectedModel === 'pro' || (selectedModel === 'lite' && internetEnabled)) {
+    console.log('🎯 ADVANCED model logic activated for:', selectedModel, 'with internet:', internetEnabled);
+    return handleAdvancedModelLogic(messages, userMessage, selectedModel, abortSignal, onChunk, onPlanGenerated, onStepStart, onSearchProgress, internetEnabled);
   }
   // Конвертируем выбранную модель в реальную модель OpenAI
   const actualModel = getActualModel(selectedModel);
@@ -861,27 +1054,53 @@ export const sendChatMessage = async (
 
       // Для запросов с планом ВСЕГДА нужен веб-поиск для получения актуальных данных
       const shouldSearchForPlan = shouldGeneratePlan && plan.length > 0;
+      
+      // Определяем, требует ли запрос актуальной информации из интернета
+      // Даже если это запрос на создание контента (напиши, создай), но он касается актуальных данных
+      const requiresActualData = ['новост', 'погод', 'курс', 'цена', 'стоимост', 'событи', 
+        'происшестви', 'сегодня', 'сейчас', 'актуальн', 'последн', 'текущ', 'свеж',
+        'температур', 'weather', 'temperature', 'рейтинг', 'топ', 'статистик', 'данн'].some(
+        keyword => lowerQuery.includes(keyword)
+      );
+      
+      // Проверяем необходимость веб-поиска
+      const needsWebSearch = requiresWebSearch(userMessage.content) || shouldSearchForPlan || requiresActualData;
+      
+      console.log('🔍 Web search decision:', {
+        isContentCreation,
+        requiresActualData,
+        needsWebSearch,
+        shouldSearchForPlan,
+        isVisualizationRequest,
+        internetEnabled
+      });
 
-      if ((!isContentCreation || isVisualizationRequest || shouldSearchForPlan) && internetEnabled !== false) {
-        const needsWebSearch = requiresWebSearch(userMessage.content) || shouldSearchForPlan;
-
-        if (needsWebSearch) {
-          try {
-          console.log('Web search required for:', userMessage.content);
+      // Выполняем веб-поиск если:
+      // 1. Это НЕ создание контента ИЛИ
+      // 2. Это визуализация ИЛИ
+      // 3. Нужен поиск для плана ИЛИ
+      // 4. Требуется актуальная информация (даже для создания контента)
+      if ((!isContentCreation || isVisualizationRequest || shouldSearchForPlan || requiresActualData) && internetEnabled !== false && needsWebSearch) {
+        try {
+          console.log('🌐 Web search required for:', userMessage.content);
           console.log('Query analysis:', {
             hasSearchKeyword: ['актуальн', 'сейчас', 'последн', 'новост', 'сегодня', 'время', 'курс', 'цена', 'стоимост', 'рейтинг', 'топ', 'лучш', 'статистик', 'данн', 'отчет', 'тренд', 'мод', 'популярн', 'событи', 'происшестви', 'изменени', 'обновлени', 'нов', 'текущ', 'свеж', 'последн', 'настоящ'].some(keyword => userMessage.content.toLowerCase().includes(keyword)),
             isComplex: userMessage.content.length > 50 || userMessage.content.split(/\s+/).length > 7 || ['что', 'как', 'почему', 'зачем', 'где', 'когда', 'кто', 'какой', 'какая', 'какие', 'какое'].some(word => userMessage.content.toLowerCase().includes(word)),
             isSimple: isSimpleQuery,
             isContentCreation: isContentCreation,
+            requiresActualData: requiresActualData,
             isVisualizationRequest: isVisualizationRequest
           });
           searchResults = await searchWeb(userMessage.content);
-          console.log('Search completed, results:', searchResults.substring(0, 200) + '...');
-          } catch (searchError) {
-            console.error('Error during web search:', searchError);
-            searchResults = '[SEARCH_ERROR]'; // Продолжаем без результатов поиска
-          }
+          console.log('✅ Search completed, results length:', searchResults.length);
+        } catch (searchError) {
+          console.error('❌ Error during web search:', searchError);
+          searchResults = '[SEARCH_ERROR]'; // Продолжаем без результатов поиска
         }
+      } else {
+        console.log('🚫 Web search skipped:', {
+          reason: !needsWebSearch ? 'not needed' : internetEnabled === false ? 'disabled' : 'blocked by content creation'
+        });
       }
 
       if (onPlanGenerated) {
@@ -914,28 +1133,35 @@ export const sendChatMessage = async (
         let formattedSearchContext = '';
         if (allSearchResults.size > 0) {
           formattedSearchContext = 'ДАННЫЕ ИЗ ИНТЕРНЕТА:\n\n';
-          
+
           plan.forEach((step, stepIndex) => {
             if (step.searchQueries && step.searchQueries.length > 0) {
               formattedSearchContext += `📌 Шаг ${stepIndex + 1}: ${step.step}\n`;
-              
+
               step.searchQueries.forEach((sq) => {
                 const key = `${sq.query}||[Шаг ${stepIndex + 1}: ${step.step}] ${sq.purpose}`;
                 const result = allSearchResults.get(key);
-                
+
                 if (result && result !== '[NO_RESULTS_FOUND]') {
                   formattedSearchContext += `\n🔹 ${sq.purpose} (${sq.query}):\n${result}\n`;
                 }
               });
-              
+
               formattedSearchContext += '\n';
             }
           });
+
+          // Ограничиваем длину контекста поиска (максимум 6000 символов для комплексных запросов)
+          const maxComplexSearchLength = 6000;
+          if (formattedSearchContext.length > maxComplexSearchLength) {
+            formattedSearchContext = formattedSearchContext.substring(0, maxComplexSearchLength) + '\n\n[Результаты поиска усечены для экономии места]';
+            console.log(`📏 Complex search results truncated from ${formattedSearchContext.length} to ${maxComplexSearchLength} characters`);
+          }
         }
 
           const systemMessage = messages.find(msg => msg.role === 'system') || {
             role: 'system' as const,
-            content: 'Ты полезный AI-ассистент. Каждый чат является полностью независимым и изолированным. Не используй информацию или контекст из других разговоров. Отвечай только на основе предоставленных сообщений в текущем чате.'
+            content: 'Ты полезный AI-ассистент. Каждый чат является полностью независимым и изолированным. Не используй информацию или контекст из других разговоров. Отвечай только на основе предоставленных сообщений в текущем чате.\n\nВАЖНЫЕ ИНСТРУКЦИИ:\n1. ДАВАЙ МАКСИМАЛЬНО ПОДРОБНЫЕ И ОБЪЕМНЫЕ ОТВЕТЫ\n2. ПОЛНОСТЬЮ РАСКРЫВАЙ ЗАПРОШЕННУЮ ТЕМУ\n3. КАЖДЫЙ АСПЕКТ ОБЪЯСНЯЙ ПОДРОБНО С ПРИМЕРАМИ\n4. СТРУКТУРИРУЙ ОТВЕТ С ЗАГОЛОВКАМИ И СПИСКАМИ\n5. ДАВАЙ ПРАКТИЧЕСКИЕ СОВЕТЫ И РЕКОМЕНДАЦИИ\n6. УЧИТЫВАЙ ВСЮ ИСТОРИЮ РАЗГОВОРА'
           };
 
         // Форматируем план для промпта
@@ -943,8 +1169,14 @@ export const sendChatMessage = async (
           `${idx + 1}. **${step.step}**: ${step.description}`
         ).join('\n\n');
 
+        // Используем всю историю сообщений для контекста
+        let conversationMessages = messages.filter(msg => msg.role !== 'system'); // Убираем системное сообщение
+
         const planPrompt = [
             systemMessage,
+            // Вся история чата
+            ...conversationMessages.slice(0, -1), // Все сообщения кроме последнего
+            // Последнее сообщение с планом и данными
             {
               role: 'user' as const,
             content: `${formattedSearchContext}
@@ -966,6 +1198,7 @@ ${planDescription}
 - РЕЗУЛЬТАТ должен быть готов к использованию - не давай советы, приводи выводы
 - Структурируй текст списками, подзаголовками, форматированием
 - Каждый пункт должен быть ДЕТАЛЬНЫМ и КОНКРЕТНЫМ
+- УЧИТЫВАЙ КОНТЕКСТ ПРЕДЫДУЩИХ СООБЩЕНИЙ В ЧАТЕ
 
 Исходный запрос: "${userMessage.content}"
 
@@ -1059,47 +1292,42 @@ ${planDescription}
         // Обычный ответ без плана - проверяем, нужен ли поиск для простых запросов
         let searchResults = '';
 
-        console.log('🔍 Checking internet search - internetEnabled:', internetEnabled);
+        // Явная проверка для запросов, требующих актуальной информации
+        const lowerQuery = userMessage.content.toLowerCase();
+        const normalizedQuery = lowerQuery.replace(/биткойн/gi, 'биткоин');
+        
+        // Финансовые запросы
+        const isFinancialQuery = /(курс|цена|стоимост|цены)/i.test(normalizedQuery) && 
+          (/(биткоин|крипто|криптовалют|bitcoin|ethereum|btc|eth)/i.test(normalizedQuery) || 
+           /(доллар|евро|рубль|валюта|exchange|rate)/i.test(normalizedQuery));
+        
+        // Запросы, требующие актуальных данных (новости, погода, события)
+        const requiresActualData = ['новост', 'погод', 'курс', 'цена', 'стоимост', 'событи', 
+          'происшестви', 'сегодня', 'сейчас', 'актуальн', 'последн', 'текущ', 'свеж',
+          'температур', 'weather', 'temperature', 'рейтинг', 'топ', 'статистик', 'данн'].some(
+          keyword => lowerQuery.includes(keyword)
+        );
+
+        console.log('🔍 Checking internet search:', {
+          internetEnabled,
+          isFinancialQuery,
+          requiresActualData,
+          query: userMessage.content
+        });
+        
         if (internetEnabled !== false) {
-          const needsWebSearch = requiresWebSearch(userMessage.content);
+          const needsWebSearch = requiresWebSearch(userMessage.content) || isFinancialQuery || requiresActualData;
           console.log('🔍 Simple query needs web search:', needsWebSearch, 'for:', userMessage.content);
 
         if (needsWebSearch) {
           try {
             console.log('🌐 Starting web search for simple query:', userMessage.content);
-            console.log('🌐 Calling MCP API directly at:', window.location.origin + '/api/mcp/search');
-            const mcpResponse = await fetch('/api/mcp/search', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                query: userMessage.content,
-                max_results: 5
-              })
-            });
-            console.log('🌐 MCP fetch completed, status:', mcpResponse.status);
-
-            if (mcpResponse.ok) {
-              const mcpData = await mcpResponse.json();
-              console.log('🌐 MCP API response:', mcpData);
-
-              if (mcpData.results && mcpData.results.length > 0) {
-                searchResults = mcpData.results.map((result: any) =>
-                  `${result.title}\n${result.content}\nИсточник: ${result.url}`
-                ).join('\n\n');
-                console.log('✅ MCP search successful, formatted results length:', searchResults.length);
-              } else {
-                searchResults = '[NO_RESULTS_FOUND]';
-                console.log('⚠️ MCP returned no results for query:', userMessage.content);
-              }
-            } else {
-              const errorText = await mcpResponse.text();
-              console.error('❌ MCP API error:', mcpResponse.status, errorText);
-              searchResults = '[SEARCH_ERROR]';
-            }
+            // Используем обычный веб-поиск для всех запросов, требующих поиска
+            // Это обеспечивает правильную работу с криптовалютами и другими данными
+            searchResults = await searchWeb(userMessage.content);
+            console.log('✅ Web search completed, results length:', searchResults.length);
           } catch (searchError) {
-            console.error('❌ Error during MCP API call:', searchError);
+            console.error('❌ Error during web search:', searchError);
             searchResults = '[SEARCH_ERROR]';
           }
         } else {
@@ -1109,28 +1337,49 @@ ${planDescription}
           console.log('🚫 Internet search disabled');
         }
 
-        const searchContext = searchResults && searchResults !== '[NO_RESULTS_FOUND]' && !searchResults.includes('технической ошибки') && !searchResults.includes('[SEARCH_ERROR]')
-          ? `Результаты поиска в интернете:\n${searchResults}\n\n`
+        // Ограничиваем длину результатов поиска (максимум 4000 символов для избежания 413 ошибки)
+        const maxSearchLength = 4000;
+        let truncatedSearchResults = searchResults;
+        if (searchResults && searchResults.length > maxSearchLength) {
+          truncatedSearchResults = searchResults.substring(0, maxSearchLength) + '\n\n[Результаты поиска усечены для экономии места]';
+          console.log(`📏 Search results truncated from ${searchResults.length} to ${truncatedSearchResults.length} characters`);
+        }
+
+        const searchContext = truncatedSearchResults && truncatedSearchResults !== '[NO_RESULTS_FOUND]' && !truncatedSearchResults.includes('технической ошибки') && !truncatedSearchResults.includes('[SEARCH_ERROR]')
+          ? `Результаты поиска в интернете:\n${truncatedSearchResults}\n\n`
           : '';
 
         console.log('Simple query - searchContext:', searchContext ? 'HAS_CONTEXT' : 'NO_CONTEXT');
         console.log('Simple query - searchResults:', searchResults);
         console.log('Simple query - searchContext length:', searchContext.length);
 
-        // Для изоляции контекста используем только системное сообщение + текущий запрос
+        // Всегда используем всю историю сообщений для поддержания контекста
         const systemMessage = messages.find(msg => msg.role === 'system');
+        let conversationMessages = messages.filter(msg => msg.role !== 'system'); // Убираем системное сообщение из истории
+
+        console.log('🔄 Simple query context:');
+        console.log('  - System message found:', !!systemMessage);
+        console.log('  - Conversation messages count:', conversationMessages.length);
+        console.log('  - Conversation messages:', conversationMessages.map((msg, i) => `${i}: ${msg.role} - ${msg.content.substring(0, 50)}...`));
+
         const enhancedMessages = searchContext ? [
-          systemMessage || { role: 'system' as const, content: 'Ты полезный AI-ассистент. Используй предоставленную информацию из поиска для ответа на вопросы пользователя.' },
+          // Системное сообщение
+          systemMessage || { role: 'system' as const, content: 'Ты полезный AI-ассистент. Используй предоставленную информацию из поиска для ответа на вопросы пользователя. Учитывай контекст предыдущих сообщений в чате.\n\nИНСТРУКЦИИ ДЛЯ ПОДРОБНЫХ ОТВЕТОВ:\n• ДАВАЙ МАКСИМАЛЬНО ПОДРОБНЫЕ ОТВЕТЫ\n• ПОЛНОСТЬЮ АНАЛИЗИРУЙ ВСЮ ИНФОРМАЦИЮ ИЗ ПОИСКА\n• КАЖДЫЙ ФАКТ И АСПЕКТ ОБЪЯСНЯЙ ПОДРОБНО\n• СТРУКТУРИРУЙ ОТВЕТ ЛОГИЧНО С ЗАГОЛОВКАМИ\n• ПРИВОДИ СТАТИСТИКУ И ПРИМЕРЫ ИЗ ПОИСКА\n• ДАВАЙ ПРАКТИЧЕСКИЕ ВЫВОДЫ И РЕКОМЕНДАЦИИ' },
+          // Вся история чата
+          ...conversationMessages.slice(0, -1), // Все сообщения кроме последнего
+          // Последнее сообщение с контекстом поиска
           {
             role: 'user' as const,
             content: `Информация из интернета: ${searchContext}\n\nВопрос: ${userMessage.content}`
           }
         ] : [
+          // Системное сообщение
           systemMessage || {
             role: 'system' as const,
-            content: 'Ты полезный AI-ассистент. Каждый чат является полностью независимым и изолированным. Не используй информацию или контекст из других разговоров. Отвечай только на основе предоставленных сообщений в текущем чате.'
+            content: 'Ты полезный AI-ассистент. Каждый чат является полностью независимым и изолированным. Не используй информацию или контекст из других разговоров. Отвечай только на основе предоставленных сообщений в текущем чате.\n\nИНСТРУКЦИИ ДЛЯ КАЧЕСТВЕННЫХ ОТВЕТОВ:\n• СТРЕМИСЬ К МАКСИМАЛЬНОЙ ПОДРОБНОСТИ И ОБЪЕМНОСТИ\n• ПОЛНОСТЬЮ РАСКРЫВАЙ ТЕМУ ЗАПРОСА\n• КАЖДЫЙ АСПЕКТ ОБЪЯСНЯЙ С ПРИМЕРАМИ\n• СТРУКТУРИРУЙ ОТВЕТ ЛОГИЧНО\n• ДАВАЙ ПРАКТИЧЕСКИЕ СОВЕТЫ\n• ИСПОЛЬЗУЙ ВСЮ ИСТОРИЮ ЧАТА ДЛЯ КОНТЕКСТА'
           },
-          userMessage
+          // Вся история чата
+          ...conversationMessages
         ];
 
         console.log('Making fetch request to:', `${API_BASE_URL}/chat`);
@@ -1139,6 +1388,10 @@ ${planDescription}
           model: actualModel,
           stream: true
         });
+        console.log('Messages being sent to API:', enhancedMessages.map(msg => ({
+          role: msg.role,
+          content: msg.content.substring(0, 100) + (msg.content.length > 100 ? '...' : '')
+        })));
 
         // GPT-5.1 не поддерживает streaming
         const useStreaming = actualModel !== 'gpt-5.1';
@@ -1304,16 +1557,21 @@ ${planDescription}
 
 // Генерация плана ответа
 const generateResponsePlan = async (userQuestion: string, selectedModel: string): Promise<PlanStep[]> => {
+  console.log('🎯 generateResponsePlan called with question:', userQuestion.substring(0, 50) + '...', 'model:', selectedModel);
+
   // Проверяем доступность API
   if (!isApiAvailable()) {
+    console.log('❌ API not available, returning empty plan');
     return []; // Возвращаем пустой план при недоступности API
   }
 
-  const actualModel = getActualModel(selectedModel);
-  const modelParams = getModelParams(selectedModel);
+  // Для генерации плана всегда используем gpt-4o-mini, так как она стабильнее
+  const actualModel = 'gpt-4o-mini';
+  const modelParams = { max_tokens: 4000, temperature: 0.3 };
+  console.log('🔧 Using model for plan generation:', actualModel, '(forced to gpt-4o-mini for stability)');
 
   const planPrompt = `
-СОЗДАЙ ПЛАН С УКАЗАНИЕМ ПОИСКОВЫХ ЗАПРОСОВ ДЛЯ ИНТЕРНЕТА
+СОЗДАЙ ПОДРОБНЫЙ ПЛАН С УКАЗАНИЕМ ПОИСКОВЫХ ЗАПРОСОВ ДЛЯ ИНТЕРНЕТА
 
 ВАЖНО: СЕЙЧАС 2025 ГОД! Используй актуальные данные где это имеет смысл.
 Для литературных произведений, классики и исторических тем НЕ добавляй год - эти знания вечны.
@@ -1321,29 +1579,15 @@ const generateResponsePlan = async (userQuestion: string, selectedModel: string)
 
 ЗАПРОС ПОЛЬЗОВАТЕЛЯ: "${userQuestion}"
 
-ИНСТРУКЦИИ:
-1. РАЗБЕРИСЬ в задаче - что нужно СОЗДАТЬ/ВЫПОЛНИТЬ
-2. РАЗДЕЛИ на 3-7 шагов, каждый с РЕЗУЛЬТАТОМ
-3. ДЛЯ КАЖДОГО ШАГА укажи ЧТО НУЖНО НАЙТИ В ИНТЕРНЕТЕ:
-   - searchQueries: массив поисковых запросов
-   - Для высокого приоритета (high) - критичные данные для этого шага
-   - Для среднего (medium) - дополнительные данные
-   - Для низкого (low) - опциональные данные
-
-ТИПЫ ПОИСКОВ ПО ШАГАМ:
-• Для бизнес-плана: статистика рынка, конкуренты, цены, тренды, спрос
-• Для анализа: свежие данные, статистика, отчёты, тренды
-• Для технологий: новые решения, технологии, бенчмарки, рекомендации
-• Для финансов: курсы, процентные ставки, цены, анализ
+ИНСТРУКЦИИ ПО СОЗДАНИЮ ПЛАНА:
+1. РАЗБЕРИСЬ ЧТО НУЖНО ПОЛЬЗОВАТЕЛЮ
+2. РАЗДЕЛИ НА 3-5 ОСНОВНЫХ ШАГОВ
+3. ДЛЯ КАЖДОГО ШАГА ДОБАВЬ 2-3 ПОИСКОВЫХ ЗАПРОСА
 
 ПРАВИЛА:
-- Шаги идут в логической последовательности
-- КАЖДЫЙ ШАГ производит результат
-- Поиск помогает получить АКТУАЛЬНЫЕ ДАННЫЕ для каждого шага
-- searchQueries содержит конкретные поисковые фразы
-- ОБЯЗАТЕЛЬНО: ВСЕ ПОИСКОВЫЕ ЗАПРОСЫ ДОЛЖНЫ ЗАКАНЧИВАТЬСЯ НА "2025 ГОД" ИЛИ "2025"
-- СТРОГО ЗАПРЕЩЕНО: НЕ ДОБАВЛЯТЬ ГОД 2023 ИЛИ РАНЬШЕ!
-- ТОЛЬКО 2024-2025 ГОДЫ В ВСЕХ ЗАПРОСАХ!
+- Шаги в логической последовательности
+- Поисковые запросы заканчиваются на "2025" или "2025 год"
+- Используй конкретные запросы для получения актуальной информации
 
 ФОРМАТ ОТВЕТА - ТОЛЬКО JSON:
 [
@@ -1384,7 +1628,15 @@ const generateResponsePlan = async (userQuestion: string, selectedModel: string)
 ]
 `;
 
+  console.log('🎯 About to call generateResponsePlan API with model:', actualModel);
+
   // GPT-5.1 не поддерживает streaming, но здесь мы и так используем stream: false
+  console.log('🔄 Making request to API for plan generation...');
+
+  // Создаем AbortController для таймаута
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 секунд таймаут
+
   const response = await fetch(`${API_BASE_URL}/chat`, {
     method: 'POST',
     headers: {
@@ -1398,13 +1650,21 @@ const generateResponsePlan = async (userQuestion: string, selectedModel: string)
       model: actualModel,
       stream: false,
     }),
+    signal: controller.signal,
   });
 
+  clearTimeout(timeoutId);
+
+  console.log('📡 Plan generation API response status:', response.status);
+
   if (!response.ok) {
-    throw new Error(`Plan generation API error: ${response.status} ${response.statusText}`);
+    const errorText = await response.text();
+    console.error('❌ Plan generation API error:', response.status, response.statusText, errorText);
+    throw new Error(`Plan generation API error: ${response.status} ${response.statusText} - ${errorText}`);
   }
 
   const responseData = await response.json();
+  console.log('📦 Plan generation API response data received, length:', JSON.stringify(responseData).length);
 
   // Обработка ответа в зависимости от используемого API
   let planText;
@@ -1434,8 +1694,29 @@ const generateResponsePlan = async (userQuestion: string, selectedModel: string)
       cleanText = cleanText.substring(startIndex, endIndex);
     }
 
-    const plan = JSON.parse(cleanText);
-    return Array.isArray(plan) ? plan : [];
+    let plan = JSON.parse(cleanText);
+    if (!Array.isArray(plan)) {
+      plan = [];
+    }
+
+    // Ограничиваем план для предотвращения слишком больших запросов к API
+    const maxSteps = 4; // Максимум 4 шага
+    const maxQueriesPerStep = 2; // Максимум 2 запроса на шаг
+
+    if (plan.length > maxSteps) {
+      console.log(`📏 Plan truncated from ${plan.length} to ${maxSteps} steps`);
+      plan = plan.slice(0, maxSteps);
+    }
+
+    // Ограничиваем количество запросов на каждом шаге
+    plan.forEach((step: any) => {
+      if (step.searchQueries && step.searchQueries.length > maxQueriesPerStep) {
+        console.log(`📏 Step "${step.step}" queries truncated from ${step.searchQueries.length} to ${maxQueriesPerStep}`);
+        step.searchQueries = step.searchQueries.slice(0, maxQueriesPerStep);
+      }
+    });
+
+    return plan;
   } catch (error) {
     console.error('Error parsing plan JSON:', error);
     console.error('Original plan text:', planText);
@@ -1451,22 +1732,19 @@ const generateResponsePlan = async (userQuestion: string, selectedModel: string)
       return []; // Пустой план = обычный ответ без этапов
     }
 
-    // Возвращаем дефолтный план для сложных запросов
+    // Возвращаем дефолтный план для сложных запросов (упрощенный для экономии)
     return [
       {
-        step: "Анализ вопроса",
-        description: "Проанализировать и понять суть вопроса пользователя",
-        completed: false
-      },
-      {
-        step: "Подготовка ответа",
-        description: "Собрать необходимую информацию для ответа",
-        completed: false
-      },
-      {
-        step: "Формулировка ответа",
-        description: "Сформулировать полный и понятный ответ",
-        completed: false
+        step: "Анализ и подготовка",
+        description: "Проанализировать вопрос и подготовить ответ на основе доступных данных",
+        completed: false,
+        searchQueries: [
+          {
+            query: userQuestion.substring(0, 100) + " 2025", // Ограничиваем длину запроса
+            priority: "high",
+            purpose: "Основные данные для ответа"
+          }
+        ]
       }
     ];
   }
@@ -1595,7 +1873,13 @@ ${searchContext}
       },
       body: JSON.stringify({
         messages: [
-          ...messages.slice(0, -1),
+          // Системное сообщение
+          messages.find(msg => msg.role === 'system') || {
+            role: 'system',
+            content: 'Ты эксперт по визуализации данных. Создавай JSON для графиков на основе предоставленной информации.'
+          },
+          // Вся история чата
+          ...messages.filter(msg => msg.role !== 'system').slice(0, -1), // Все сообщения кроме системного и последнего
           { role: 'user', content: visualizationPrompt }
         ],
           model: actualModel,

@@ -96,6 +96,7 @@ const Chat = () => {
   const [currentStep, setCurrentStep] = useState<number>(-1);
   const [isPlanning, setIsPlanning] = useState(false);
   const [searchProgress, setSearchProgress] = useState<string[]>([]);
+  const [thinkingMessages, setThinkingMessages] = useState<string[]>([]);
   const [internetEnabled, setInternetEnabled] = useState<boolean>(() => {
     // Загружаем настройку из localStorage
     const saved = localStorage.getItem('windexsai-internet-enabled');
@@ -290,6 +291,13 @@ const Chat = () => {
     console.log('Message saved, calling sendChatMessage...');
 
     try {
+      // Очищаем промежуточные сообщения и состояния
+      setThinkingMessages([]);
+      setResponsePlan([]);
+      setCurrentStep(-1);
+      setIsPlanning(false);
+      setSearchProgress([]);
+
       // Создаем новый AbortController для этого запроса
       abortControllerRef.current = new AbortController();
 
@@ -326,6 +334,12 @@ const Chat = () => {
         (plan: PlanStep[]) => {
           setResponsePlan(plan);
           setIsPlanning(true);
+          if (plan.length > 0) {
+            // Показываем план в чате
+            const planText = `📋 Создан план из ${plan.length} шагов:\n` +
+              plan.map((step, idx) => `${idx + 1}. ${step.step}`).join('\n');
+            setThinkingMessages([planText]);
+          }
         },
         // Колбэк для начала выполнения этапа
         (stepIndex: number, step: PlanStep) => {
@@ -335,6 +349,17 @@ const Chat = () => {
         // Колбэк для прогресса поиска
         (queries: string[]) => {
           setSearchProgress(queries);
+          if (queries.length > 0) {
+            // Показываем реальные поисковые запросы в чате
+            setThinkingMessages(prev => {
+              const newQueries = queries.filter(q => !prev.some(msg => msg.includes(`"${q}"`)));
+              if (newQueries.length > 0) {
+                const queryMessages = newQueries.map(q => `🔍 Поиск: "${q}"`);
+                return [...prev, ...queryMessages];
+              }
+              return prev;
+            });
+          }
         },
         // Настройка интернет-поиска
         internetEnabled,
@@ -352,6 +377,7 @@ const Chat = () => {
       setCurrentStep(-1);
       setIsPlanning(false);
       setSearchProgress([]);
+      setThinkingMessages([]);
     } catch (error) {
       // Проверяем, было ли прервано выполнение
       if (error.name === 'AbortError') {
@@ -379,6 +405,7 @@ const Chat = () => {
       setCurrentStep(-1);
       setIsPlanning(false);
       setSearchProgress([]);
+      setThinkingMessages([]);
     } finally {
       console.log("sendMessage finished, setting isLoading to false");
       setIsLoading(false);
@@ -645,6 +672,18 @@ const Chat = () => {
             <ChatMessage key={index} message={message} selectedModel={selectedModel} />
           ))}
 
+          {/* Промежуточные сообщения работы LLM */}
+          {thinkingMessages.map((thinkingMessage, index) => (
+            <div key={`thinking-${index}`} className="mb-4 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg animate-fade-in">
+              <div className="flex items-center gap-2">
+                <div className="w-5 h-5 rounded-full bg-blue-500 flex items-center justify-center animate-pulse">
+                  <span className="text-white text-xs">💭</span>
+                </div>
+                <span className="text-sm text-blue-800 font-medium">{thinkingMessage}</span>
+              </div>
+            </div>
+          ))}
+
           {/* Прогресс поиска в интернете */}
           {searchProgress.length > 0 && (
             <div className="mb-4 p-4 bg-blue-50/80 border border-blue-200 rounded-lg animate-fade-in">
@@ -782,12 +821,24 @@ const Chat = () => {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="lite">WindexsAI Lite</SelectItem>
-                    <SelectItem value="pro">WindexsAI Pro</SelectItem>
+                    <SelectItem value="lite">
+                      <div className="flex flex-col">
+                        <span>WindexsAI Lite</span>
+                        <span className="text-xs text-muted-foreground">
+                          Базовый ИИ {internetEnabled ? "+ Интернет + Планирование" : ""}
+                        </span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="pro">
+                      <div className="flex flex-col">
+                        <span>WindexsAI Pro</span>
+                        <span className="text-xs text-muted-foreground">Продвинутый ИИ + Интернет + Планирование</span>
+                      </div>
+                    </SelectItem>
                   </SelectContent>
                 </Select>
                 <span className="text-[10px] sm:text-xs text-muted-foreground hidden sm:inline whitespace-nowrap">
-                  {selectedModel === "pro" ? "GPT-5.1" : "GPT-4o Mini"}
+                  {selectedModel === "pro" ? "Продвинутый ИИ" : `Базовый ИИ${internetEnabled ? " + Интернет" : ""}`}
                 </span>
               </div>
               
