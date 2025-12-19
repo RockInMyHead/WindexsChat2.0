@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Browser Fetch</title>
+</head>
+<body>
+    <h1>Test Browser Fetch to MCP API</h1>
+    <button onclick="testFetch()">Test Fetch</button>
+    <div id="result"></div>
+
+    <script>
+        async function testFetch() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Testing fetch...';
+
+            try {
+                console.log('Testing fetch to /api/mcp/search...');
+                const response = await fetch('/api/mcp/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        query: 'курс рубля',
+                        max_results: 2
+                    })
+                });
+
+                console.log('Response status:', response.status);
+                console.log('Response headers:', response.headers);
+
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Response data:', data);
+                    resultDiv.innerHTML = `<h2>Success!</h2><pre>${JSON.stringify(data, null, 2)}</pre>`;
+                } else {
+                    const errorText = await response.text();
+                    console.error('Error response:', errorText);
+                    resultDiv.innerHTML = `<h2>Error ${response.status}</h2><pre>${errorText}</pre>`;
+                }
+            } catch (error) {
+                console.error('Fetch error:', error);
+                resultDiv.innerHTML = `<h2>Fetch Error</h2><pre>${error.message}</pre>`;
+            }
+        }
+    </script>
+</body>
+</html>

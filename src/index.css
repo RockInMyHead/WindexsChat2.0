@@ -1,0 +1,200 @@
+/* KaTeX CSS */
+@import 'katex/dist/katex.min.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Мобильная адаптация - убираем скролл страницы */
+@layer base {
+  html, body {
+    height: 100%;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch; /* Плавный скролл на iOS */
+  }
+
+  /* На мобильных устройствах убираем вертикальный скролл */
+  @media (max-width: 768px) {
+    html, body {
+      overflow-y: hidden;
+    }
+
+    /* Предотвращаем зум при двойном тапе */
+    * {
+      touch-action: manipulation;
+    }
+
+    /* Адаптация для виртуальной клавиатуры */
+    .chat-input-area {
+      padding-bottom: env(keyboard-inset-height, 0px);
+      transition: padding-bottom 0.3s ease;
+    }
+  }
+
+  /* На десктопе оставляем скролл */
+  @media (min-width: 769px) {
+    html, body {
+      overflow-y: auto;
+    }
+  }
+}
+
+/* Кастомные стили для KaTeX (темная тема) */
+.katex {
+  font-size: 1.1em;
+}
+
+.katex-display {
+  margin: 1rem 0;
+  text-align: center;
+}
+
+.katex-display .katex {
+  font-size: 1.2em;
+}
+
+.katex .base {
+  color: hsl(var(--foreground));
+}
+
+.katex .strut {
+  display: inline-block;
+}
+
+.katex .frac-line {
+  border-bottom-style: solid;
+  border-bottom-width: 0.04em;
+  border-bottom-color: hsl(var(--foreground));
+}
+
+.katex .sizing.reset-size1.frac-line {
+  border-bottom-width: 0.04em;
+}
+
+.katex .sizing.reset-size2.frac-line {
+  border-bottom-width: 0.04em;
+}
+
+.katex .sizing.reset-size3.frac-line {
+  border-bottom-width: 0.04em;
+}
+
+.katex .sizing.reset-size4.frac-line {
+  border-bottom-width: 0.04em;
+}
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 142 30% 15%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 142 30% 15%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 142 30% 15%;
+
+    --primary: 142 71% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 142 20% 96%;
+    --secondary-foreground: 142 71% 35%;
+
+    --muted: 142 15% 95%;
+    --muted-foreground: 142 10% 45%;
+
+    --accent: 142 65% 55%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 142 20% 88%;
+    --input: 142 20% 88%;
+    --ring: 142 71% 45%;
+
+    --radius: 0.75rem;
+    
+    --gradient-primary: linear-gradient(135deg, hsl(142, 71%, 45%), hsl(142, 65%, 55%));
+    --gradient-hero: linear-gradient(180deg, hsl(142, 30%, 98%), hsl(0, 0%, 100%));
+    
+    --shadow-soft: 0 2px 8px rgba(16, 185, 129, 0.1);
+    --shadow-medium: 0 4px 16px rgba(16, 185, 129, 0.15);
+    
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 240 5.3% 26.1%;
+
+    --sidebar-primary: 240 5.9% 10%;
+
+    --sidebar-primary-foreground: 0 0% 98%;
+
+    --sidebar-accent: 240 4.8% 95.9%;
+
+    --sidebar-accent-foreground: 240 5.9% 10%;
+
+    --sidebar-border: 220 13% 91%;
+
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .dark {
+    --background: 142 25% 8%;
+    --foreground: 142 15% 95%;
+
+    --card: 142 20% 12%;
+    --card-foreground: 142 15% 95%;
+
+    --popover: 142 20% 12%;
+    --popover-foreground: 142 15% 95%;
+
+    --primary: 142 71% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 142 15% 18%;
+    --secondary-foreground: 142 71% 55%;
+
+    --muted: 142 15% 18%;
+    --muted-foreground: 142 10% 65%;
+
+    --accent: 142 65% 55%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 62.8% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 142 15% 18%;
+    --input: 142 15% 18%;
+    --ring: 142 71% 45%;
+    
+    --gradient-primary: linear-gradient(135deg, hsl(142, 71%, 45%), hsl(142, 65%, 55%));
+    --gradient-hero: linear-gradient(180deg, hsl(142, 25%, 8%), hsl(142, 20%, 12%));
+    
+    --shadow-soft: 0 2px 8px rgba(16, 185, 129, 0.2);
+    --shadow-medium: 0 4px 16px rgba(16, 185, 129, 0.25);
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}

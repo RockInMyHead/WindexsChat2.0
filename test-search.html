@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Search Logic</title>
+</head>
+<body>
+    <h1>Test requiresWebSearch Logic</h1>
+    <input type="text" id="queryInput" placeholder="Enter query" value="какой курс биткойна">
+    <button onclick="testSearch()">Test</button>
+    <div id="result"></div>
+
+    <script>
+        // Функция определения необходимости веб-поиска (расширенная логика)
+        const requiresWebSearch = (query) => {
+          const lowerQuery = query.toLowerCase();
+          console.log('🔍 requiresWebSearch called with query:', query, 'lowerQuery:', lowerQuery);
+
+          // Простые запросы никогда не требуют поиска
+          const isVerySimpleQuery = ['привет', 'hi', 'hello', 'здравствуй', 'здравствуйте', 'спасибо', 'благодарю', 'пока', 'до свидания', 'прощай', 'да', 'нет', 'ага', 'угу', 'хорошо', 'плохо', 'нормально', 'ок', 'окей', 'ладно', 'понятно', 'ясно', 'понял', 'хорошо'].some(simple =>
+            lowerQuery.trim() === simple ||
+            lowerQuery.trim().startsWith(simple + ' ') ||
+            lowerQuery.trim().endsWith(' ' + simple) ||
+            lowerQuery.trim().includes(' ' + simple + ' ')
+          );
+
+          const isTooShort = lowerQuery.trim().length < 3;
+          const isOnlyEmojis = /^[\p{Emoji}\s]+$/u.test(lowerQuery.trim());
+
+          if (isVerySimpleQuery || isTooShort || isOnlyEmojis) {
+            return false;
+          }
+
+          // 2. ФИНАНСОВЫЕ ДАННЫЕ И ЦЕНЫ
+          const financialMatch = /(курс|цена|стоимост|цены|выплат|кредит|ставка|процент|доход|налог|сбор|взнос)/i.test(lowerQuery);
+          const cryptoMatch1 = /(биткоин|доллар|евро|рубль|криптовалют|крипто|ценная бумага|акция|облигация)/i.test(lowerQuery);
+          const cryptoMatch2 = /(биткоин|биткойн)/i.test(lowerQuery);
+          const tickerMatch = /\b(btc|eth|bnb|ada|sol|dot|avax|matic|link|uni|usdc|usdt)\b/i.test(lowerQuery);
+
+          console.log('🔍 Financial checks:', { financialMatch, cryptoMatch1, cryptoMatch2, tickerMatch });
+
+          if (financialMatch || cryptoMatch1 || cryptoMatch2 || tickerMatch) {
+            console.log('🔍 requiresWebSearch: TRUE for financial/crypto query');
+            return true;
+          }
+
+          console.log('🔍 requiresWebSearch result: false for query:', query);
+          return false;
+        };
+
+        function testSearch() {
+            const query = document.getElementById('queryInput').value;
+            const result = requiresWebSearch(query);
+            document.getElementById('result').innerHTML = `
+                <h2>Result: ${result ? 'TRUE' : 'FALSE'}</h2>
+                <p>Query: "${query}"</p>
+                <p>Check browser console for detailed logs</p>
+            `;
+        }
+
+        // Auto test on load
+        window.onload = () => {
+            testSearch();
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+{
+  "type": "bar",
+  "data": [
+    {"name": "Продажи Q1", "value": 12000},
+    {"name": "Продажи Q2", "value": 15000},
+    {"name": "Продажи Q3", "value": 18000},
+    {"name": "Продажи Q4", "value": 22000}
+  ],
+  "title": "Квартальные продажи компании",
+  "xAxisKey": "name",
+  "yAxisKey": "value"
+}
