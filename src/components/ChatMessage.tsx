@@ -406,7 +406,7 @@ const CodeBlock = ({ code, language }: { code: string; language?: string }) => {
 // Функция для автоматического определения и форматирования кода в Pro режиме
 const formatCodeForPro = (text: string): string => {
   // Только для Pro режима и сообщений ассистента
-  const isProMode = text.includes('WindexsAI Pro') || text.includes('GPT-5.1') || text.includes('GPT-4o');
+  const isProMode = text.includes('WindexsAI Pro') || text.includes('DeepSeek Reasoner') || text.includes('deepseek-reasoner');
 
   if (!isProMode) return text;
 
@@ -538,10 +538,12 @@ const parseTextWithCodeBlocks = (text: string, selectedModel?: string) => {
 
 // Функция для парсинга Markdown с красивыми символами
 const parseMarkdown = (text: string): React.ReactNode[] => {
+  // Разбиваем текст на строки для обработки заголовков и списков
   const lines = text.split('\n');
   const result: React.ReactNode[] = [];
   let currentList: string[] = [];
   let listLevel = 0;
+  let currentTable: string[] = [];
 
   const flushList = () => {
     if (currentList.length > 0) {
@@ -560,12 +562,99 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
     }
   };
 
+  const flushTable = () => {
+    if (currentTable.length >= 2) { // Минимум заголовок + разделитель
+      const tableLines = currentTable.filter(line => line.trim());
+      if (tableLines.length >= 2) {
+        const headerLine = tableLines[0];
+        const separatorLine = tableLines[1];
+        const dataLines = tableLines.slice(2);
+
+        // Проверяем, что вторая строка является разделителем (содержит ---)
+        if (separatorLine.includes('---') || separatorLine.includes(':')) {
+          try {
+            const headers = parseTableRow(headerLine);
+            const alignments = parseTableAlignment(separatorLine);
+            const rows = dataLines.map(parseTableRow);
+
+            result.push(
+              <div key={`table-${result.length}`} className="my-4 overflow-x-auto">
+                <table className="min-w-full border-collapse border border-border">
+                  <thead>
+                    <tr className="bg-muted/50">
+                      {headers.map((header, idx) => (
+                        <th key={idx} className="border border-border px-4 py-2 text-left font-semibold">
+                          {renderInlineMarkdown(header.trim())}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row, rowIdx) => (
+                      <tr key={rowIdx} className="hover:bg-muted/30">
+                        {row.map((cell, cellIdx) => (
+                          <td key={cellIdx} className="border border-border px-4 py-2">
+                            {renderInlineMarkdown(cell.trim())}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+          } catch (error) {
+            // Если парсинг таблицы не удался, рендерим как обычный текст
+            currentTable.forEach((tableLine, idx) => {
+              result.push(
+                <p key={`table-text-${result.length}-${idx}`} className="my-1">
+                  {renderInlineMarkdown(tableLine)}
+                </p>
+              );
+            });
+          }
+        } else {
+          // Не таблица, рендерим как обычный текст
+          currentTable.forEach((tableLine, idx) => {
+            result.push(
+              <p key={`table-text-${result.length}-${idx}`} className="my-1">
+                {renderInlineMarkdown(tableLine)}
+              </p>
+            );
+          });
+        }
+      }
+      currentTable = [];
+    } else if (currentTable.length > 0) {
+      // Не таблица, рендерим как обычный текст
+      currentTable.forEach((tableLine, idx) => {
+        result.push(
+          <p key={`table-text-${result.length}-${idx}`} className="my-1">
+            {renderInlineMarkdown(tableLine)}
+          </p>
+        );
+      });
+      currentTable = [];
+    }
+  };
+
+  const parseTableRow = (line: string): string[] => {
+    // Убираем ведущие и конечные |, разбиваем по | и убираем лишние пробелы
+    return line.split('|').slice(1, -1).map(cell => cell.trim());
+  };
+
+  const parseTableAlignment = (line: string): string[] => {
+    // Простая логика выравнивания - можно расширить позже
+    return line.split('|').slice(1, -1).map(() => 'left');
+  };
+
   lines.forEach((line, lineIndex) => {
     const trimmedLine = line.trim();
 
-    // Пропускаем пустые строки, но флашим список
+    // Пропускаем пустые строки, но флашим список и таблицы
     if (!trimmedLine) {
       flushList();
+      flushTable();
       if (lineIndex < lines.length - 1) {
         result.push(<br key={`br-${lineIndex}`} />);
       }
@@ -575,11 +664,12 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
     // Заголовки H4 (####)
     if (trimmedLine.startsWith('####')) {
       flushList();
+      flushTable();
       const title = trimmedLine.replace(/^####\s+/, '').trim();
       result.push(
         <h4 key={`h4-${lineIndex}`} className="text-lg font-bold mt-4 mb-2 text-foreground flex items-center gap-2">
           <span className="text-primary">▸</span>
-          <span>{title}</span>
+          <span>{renderInlineMarkdown(title)}</span>
         </h4>
       );
       return;
@@ -588,11 +678,12 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
     // Заголовки H3 (###)
     if (trimmedLine.startsWith('###')) {
       flushList();
+      flushTable();
       const title = trimmedLine.replace(/^###\s+/, '').trim();
       result.push(
         <h3 key={`h3-${lineIndex}`} className="text-xl font-bold mt-5 mb-3 text-foreground flex items-center gap-2">
           <span className="text-primary">◆</span>
-          <span>{title}</span>
+          <span>{renderInlineMarkdown(title)}</span>
         </h3>
       );
       return;
@@ -601,11 +692,12 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
     // Заголовки H2 (##)
     if (trimmedLine.startsWith('##')) {
       flushList();
+      flushTable();
       const title = trimmedLine.replace(/^##\s+/, '').trim();
       result.push(
         <h2 key={`h2-${lineIndex}`} className="text-2xl font-bold mt-6 mb-4 text-foreground flex items-center gap-2 border-b border-border pb-2">
           <span className="text-primary">✦</span>
-          <span>{title}</span>
+          <span>{renderInlineMarkdown(title)}</span>
         </h2>
       );
       return;
@@ -614,11 +706,12 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
     // Заголовки H1 (#)
     if (trimmedLine.startsWith('#') && !trimmedLine.startsWith('##')) {
       flushList();
+      flushTable();
       const title = trimmedLine.replace(/^#\s+/, '').trim();
       result.push(
         <h1 key={`h1-${lineIndex}`} className="text-3xl font-bold mt-6 mb-4 text-foreground flex items-center gap-3 border-b-2 border-primary pb-3">
           <span className="text-primary text-2xl">★</span>
-          <span>{title}</span>
+          <span>{renderInlineMarkdown(title)}</span>
         </h1>
       );
       return;
@@ -638,6 +731,7 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
     // Нумерованные списки
     if (/^\d+\.\s+/.test(trimmedLine)) {
       flushList();
+      flushTable();
       const item = trimmedLine.replace(/^\d+\.\s+/, '').trim();
       const number = trimmedLine.match(/^\d+/)?.[0] || '';
       result.push(
@@ -649,7 +743,19 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
       return;
     }
 
-    // Обычный текст
+    // Таблицы - строки, начинающиеся с |
+    if (trimmedLine.includes('|')) {
+      flushList();
+      currentTable.push(line); // Добавляем оригинальную строку, не trimmedLine
+      return;
+    }
+
+    // Если мы здесь и у нас есть таблица, но текущая строка не часть таблицы - флашим таблицу
+    if (currentTable.length > 0) {
+      flushTable();
+    }
+
+    // Обычный текст - применяем inline markdown ко всей строке
     flushList();
     result.push(
       <p key={`p-${lineIndex}`} className="my-2 leading-relaxed">
@@ -659,6 +765,7 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
   });
 
   flushList();
+  flushTable();
   return result;
 };
 
@@ -939,82 +1046,9 @@ const TextWithCodeBlocks = ({ text, selectedModel }: { text: string; selectedMod
 
 const ChatMessage = ({ message, selectedModel }: ChatMessageProps) => {
   const isUser = message.role === "user";
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  // TTS variables removed - using only DeepSeek models
 
-  // Функция для генерации и воспроизведения TTS
-  const handleTTS = async () => {
-    if (isPlaying) {
-      // Останавливаем воспроизведение
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-      }
-      setIsPlaying(false);
-      return;
-    }
-
-    setIsLoading(true);
-
-    try {
-      // Получаем текст для озвучки (убираем блоки кода из текста)
-      const textToSpeak = message.content.replace(/```[\s\S]*?```/g, '').trim();
-
-      if (!textToSpeak) {
-        alert('Нет текста для озвучки');
-        setIsLoading(false);
-        return;
-      }
-
-      // Отправляем запрос к нашему прокси для OpenAI TTS API
-      const response = await fetch('/api/tts', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'tts-1',
-          input: textToSpeak,
-          voice: 'alloy', // Можно выбрать: alloy, echo, fable, onyx, nova, shimmer
-          speed: 1.0
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`OpenAI API error: ${response.status}`);
-      }
-
-      // Получаем аудио данные
-      const audioBlob = await response.blob();
-      const audioUrl = URL.createObjectURL(audioBlob);
-
-      // Создаем аудио элемент и воспроизводим
-      const audio = new Audio(audioUrl);
-      audioRef.current = audio;
-
-      audio.onended = () => {
-        setIsPlaying(false);
-        URL.revokeObjectURL(audioUrl);
-      };
-
-      audio.onerror = () => {
-        setIsPlaying(false);
-        setIsLoading(false);
-        alert('Ошибка воспроизведения аудио');
-        URL.revokeObjectURL(audioUrl);
-      };
-
-      await audio.play();
-      setIsPlaying(true);
-
-    } catch (error) {
-      console.error('TTS error:', error);
-      alert('Ошибка генерации речи. Проверьте API ключ и подключение.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // TTS function removed - using only DeepSeek models
 
   // Парсим конфигурацию визуализации из текста сообщения
   const visualizationConfig = useMemo(() => {
@@ -1058,31 +1092,7 @@ const ChatMessage = ({ message, selectedModel }: ChatMessageProps) => {
           <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-semibold">
             AI
           </div>
-          {/* Кнопка озвучки */}
-          <button
-            onClick={handleTTS}
-            disabled={isLoading}
-            className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors ${
-              isPlaying
-                ? 'bg-red-500 text-white hover:bg-red-600'
-                : isLoading
-                ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
-                : 'bg-gray-600 text-gray-200 hover:bg-gray-500'
-            }`}
-            title={isPlaying ? 'Остановить озвучку' : 'Озвучить сообщение'}
-          >
-            {isLoading ? (
-              <div className="w-3 h-3 border border-current border-t-transparent rounded-full animate-spin"></div>
-            ) : isPlaying ? (
-              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
-              </svg>
-            ) : (
-              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
-              </svg>
-            )}
-          </button>
+          {/* TTS removed - using only DeepSeek models */}
         </div>
       )}
       <div className={`flex-1 pt-1 ${isUser ? "max-w-[70%]" : "max-w-[80%]"}`}>

@@ -46,11 +46,11 @@ npm run dev:full
 
 ### Настройка API ключей
 
-1. **OpenAI API ключ:**
-   - Получите ключ от [OpenAI](https://platform.openai.com/api-keys)
+1. **DeepSeek API ключ:**
+   - Получите ключ от [DeepSeek](https://platform.deepseek.com/)
    - Добавьте в `.env`:
    ```bash
-   VITE_OPENAI_API_KEY=your_openai_key_here
+   DEEPSEEK_API_KEY=your_deepseek_key_here
    ```
 
 2. **Tavily API ключ (для поиска в интернете):**
@@ -62,7 +62,7 @@ npm run dev:full
 
 3. **Создайте файл `.env`:**
    ```bash
-   VITE_OPENAI_API_KEY=your_openai_key_here
+   DEEPSEEK_API_KEY=your_deepseek_key_here
    TAVILY_API_KEY=your_tavily_key_here
    ```
 

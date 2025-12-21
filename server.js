@@ -6,6 +6,7 @@ import { DatabaseService } from './src/lib/database.js';
 import { marketRouter } from './src/routes/market.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import JSON5 from 'json5';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,14 +14,13 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 1062;
 
-// Стоимость токенов за 1M токенов в долларах (на декабрь 2025)
+// Стоимость токенов за 1M токенов в долларах (DeepSeek models only)
 const getTokenPrices = (model) => {
   const prices = {
-    'gpt-4o-mini': { input: 0.15, output: 0.60 },
-    'gpt-4o': { input: 2.50, output: 10.00 },
-    'gpt-5.1': { input: 5.00, output: 15.00 }
+    'deepseek-chat': { input: 0.07, output: 1.10 },
+    'deepseek-reasoner': { input: 0.55, output: 2.19 }
   };
-  return prices[model] || prices['gpt-4o-mini'];
+  return prices[model] || prices['deepseek-chat'];
 };
 
 // Детектор market queries
@@ -79,7 +79,7 @@ Market Cap: ${quote.usd_market_cap ? '$' + (quote.usd_market_cap / 1e9).toFixed(
 24h Volume: ${quote.usd_24h_vol ? '$' + (quote.usd_24h_vol / 1e9).toFixed(2) + 'B' : 'N/A'}
 Cached: ${data.cached}`;
   } catch (error) {
-    console.error('❌ Server: Market snapshot error:', error);
+    console.error(`❌ Market Snapshot Error | Error: ${error.message || error} | Stack: ${error.stack?.substring(0, 200) || 'none'}...`);
     return '[MARKET_DATA_ERROR]';
   }
 };
@@ -97,7 +97,8 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.use(express.json());
+// Увеличиваем лимит размера тела запроса до 10MB для больших контекстов
+app.use(express.json({ limit: '10mb' }));
 
 // Market API Routes
 app.use('/api/market', marketRouter);
@@ -107,10 +108,10 @@ app.use('/api/market', marketRouter);
 // Создать новую сессию чата
 app.post('/api/sessions', (req, res) => {
   try {
-    console.log('POST /api/sessions called with:', req.body, 'headers:', req.headers.origin);
     const { title = 'Новый чат' } = req.body;
+    console.log(`📝 POST /api/sessions | Title: "${title}" | Origin: ${req.headers.origin || 'none'}`);
     const sessionId = DatabaseService.createSession(title);
-    console.log('Session created successfully:', sessionId);
+    console.log(`✅ Session created | ID: ${sessionId} | Title: "${title}"`);
     res.json({ sessionId });
   } catch (error) {
     console.error('Error creating session:', error);
@@ -121,9 +122,8 @@ app.post('/api/sessions', (req, res) => {
 // Получить все сессии
 app.get('/api/sessions', (req, res) => {
   try {
-    console.log('GET /api/sessions called, headers:', req.headers.origin);
     const sessions = DatabaseService.getAllSessions();
-    console.log('Returning', sessions.length, 'sessions');
+    console.log(`📋 GET /api/sessions | Origin: ${req.headers.origin || 'none'} | Returning ${sessions.length} session(s)`);
     res.json(sessions);
   } catch (error) {
     console.error('Error getting sessions:', error);
@@ -190,160 +190,205 @@ app.delete('/api/sessions/:sessionId', (req, res) => {
   }
 });
 
+// === Wallet API ===
+
+// Получить информацию о кошельке пользователя
+app.get('/api/wallet/:userId', (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = DatabaseService.getUserById(parseInt(userId));
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Получаем статистику использования API
+    const apiUsage = DatabaseService.getTotalApiUsageByUser(parseInt(userId));
+
+    res.json({
+      user: user,
+      apiUsage: apiUsage
+    });
+  } catch (error) {
+    console.error('Wallet API error:', error);
+    res.status(500).json({ error: 'Failed to get wallet info' });
+  }
+});
+
+// Получить транзакции пользователя
+app.get('/api/wallet/:userId/transactions', (req, res) => {
+  try {
+    const { userId } = req.params;
+    const limit = parseInt(req.query.limit) || 50;
+
+    const transactions = DatabaseService.getTransactionsByUser(parseInt(userId), limit);
+    res.json({ transactions });
+  } catch (error) {
+    console.error('Transactions API error:', error);
+    res.status(500).json({ error: 'Failed to get transactions' });
+  }
+});
+
+// Получить историю использования API
+app.get('/api/wallet/:userId/api-usage', (req, res) => {
+  try {
+    const { userId } = req.params;
+    const limit = parseInt(req.query.limit) || 100;
+
+    const apiUsage = DatabaseService.getApiUsageByUser(parseInt(userId), limit);
+    res.json({ apiUsage });
+  } catch (error) {
+    console.error('API usage API error:', error);
+    res.status(500).json({ error: 'Failed to get API usage' });
+  }
+});
+
+// Пополнить баланс (демо эндпоинт)
+app.post('/api/wallet/:userId/deposit', (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { amount, description } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+
+    DatabaseService.updateUserBalance(parseInt(userId), amount);
+    DatabaseService.createTransaction(
+      parseInt(userId),
+      'deposit',
+      amount,
+      description || 'Balance deposit',
+      `deposit_${Date.now()}`
+    );
+
+    const updatedUser = DatabaseService.getUserById(parseInt(userId));
+    res.json({ user: updatedUser });
+  } catch (error) {
+    console.error('Deposit API error:', error);
+    res.status(500).json({ error: 'Failed to deposit funds' });
+  }
+});
+
+// Получить/создать текущего пользователя
+app.post('/api/users/current', (req, res) => {
+  try {
+    const { id, name, email } = req.body;
+
+    if (!id || !email) {
+      return res.status(400).json({ error: 'User ID and email are required' });
+    }
+
+    console.log('👤 Getting/creating user:', id, email);
+
+    // Проверяем, существует ли уже пользователь по email
+    let user = DatabaseService.getUserByEmail(email);
+
+    if (!user) {
+      // Создаем нового пользователя
+      console.log('📝 Creating new user:', email);
+      const initialBalance = 10.0; // $10 для новых пользователей
+      const userId = DatabaseService.createUser(name || email, email, initialBalance);
+
+      if (userId) {
+        DatabaseService.createTransaction(
+          userId,
+          'deposit',
+          initialBalance,
+          'Welcome bonus',
+          'user_registration'
+        );
+      }
+
+      user = DatabaseService.getUserById(userId);
+      console.log('✅ New user created with ID:', userId);
+    } else {
+      console.log('✅ Existing user found:', user.id);
+    }
+
+    if (!user) {
+      return res.status(500).json({ error: 'Failed to get or create user' });
+    }
+
+    res.json(user);
+  } catch (error) {
+    console.error('Get current user error:', error);
+    res.status(500).json({ error: 'Failed to get current user' });
+  }
+});
+
+// Создать демо пользователя (для тестирования)
+app.post('/api/users/create-demo', (req, res) => {
+  try {
+    const { email = 'demo@example.com', username = 'Demo User' } = req.body;
+    const initialBalance = 10.0; // $10 для тестирования
+
+    // Проверяем, существует ли уже пользователь
+    let user = DatabaseService.getUserByEmail(email);
+
+    if (!user) {
+      console.log('📝 Creating new demo user:', email);
+      const userId = DatabaseService.createUser(username, email, initialBalance);
+
+      if (userId) {
+        DatabaseService.createTransaction(
+          userId,
+          'deposit',
+          initialBalance,
+          'Initial demo balance',
+          'demo_setup'
+        );
+      }
+      user = DatabaseService.getUserById(userId);
+    } else {
+      console.log('✅ Demo user already exists:', email);
+    }
+
+    res.json({ user });
+  } catch (error) {
+    console.error('Create demo user error:', error);
+    res.status(500).json({ error: 'Failed to create demo user' });
+  }
+});
+
 // === Artifacts API ===
 
-// Генерировать артефакт через OpenAI
+// Генерировать артефакт через DeepSeek
 app.post('/api/artifacts/generate', async (req, res) => {
   try {
-    const { prompt, model = 'gpt-4o-mini' } = req.body;
+    const { prompt, model = 'deepseek-chat' } = req.body;
+    console.log(`🎨 Artifact Generation | Model: ${model} | Prompt length: ${prompt?.length || 0} chars | Prompt: "${prompt?.substring(0, 150) || 'none'}..."`);
 
     if (!prompt) {
       return res.status(400).json({ error: 'Prompt is required' });
     }
 
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.DEEPSEEK_API_KEY;
+    const hasKey = !!apiKey;
+    console.log(`🔑 DeepSeek API Key Status | Configured: ${hasKey} | Key prefix: ${apiKey ? apiKey.substring(0, 7) + '...' : 'none'}`);
     if (!apiKey) {
-      return res.status(500).json({ error: 'OpenAI API key not configured on server' });
+      return res.status(500).json({ error: 'API key not configured on server' });
     }
 
-    const systemPrompt = `Ты — эксперт-разработчик, создающий полноценные веб-проекты на React + TypeScript + Vite.
+    const systemPrompt = `Создай простой сайт на React + TypeScript + Tailwind CSS.
 
-ВАЖНО: Ты ДОЛЖЕН вернуть валидный JSON-объект следующей структуры:
+Верни ТОЛЬКО JSON объект без markdown:
+
 {
-  "assistantText": "Краткое описание созданного сайта (2-3 предложения)",
+  "assistantText": "Описание сайта",
   "artifact": {
-    "title": "Название сайта",
+    "title": "Название",
     "files": {
-      "/index.html": "HTML код",
-      "/src/main.tsx": "React entry point",
-      "/src/App.tsx": "Главный компонент",
-      "/src/index.css": "Tailwind CSS стили",
-      "/src/components/Component1.tsx": "дополнительные компоненты",
-      ...другие файлы
+      "/index.html": "<!DOCTYPE html><html><body><div id='root'></div></body></html>",
+      "/src/main.tsx": "import React from 'react'; import ReactDOM from 'react-dom/client'; import App from './App'; ReactDOM.createRoot(document.getElementById('root')!).render(<App />);",
+      "/src/App.tsx": "код компонента App",
+      "/src/index.css": "@tailwind base; @tailwind components; @tailwind utilities;"
     },
-    "deps": {
-      "react": "^18.2.0",
-      "react-dom": "^18.2.0",
-      "tailwindcss": "^3.4.0",
-      ...другие зависимости если нужны
-    }
+    "deps": {"react": "^18.2.0", "react-dom": "^18.2.0", "tailwindcss": "^3.4.0"}
   }
-}
+}`;
 
-ОБЯЗАТЕЛЬНЫЕ ТРЕБОВАНИЯ:
-1. Всегда включай файлы: /index.html, /src/main.tsx, /src/App.tsx, /src/index.css
-2. Используй Tailwind CSS через NPM зависимость (НЕ CDN!)
-3. Создавай СОВРЕМЕННЫЙ, КРАСИВЫЙ дизайн с ОТЛИЧНЫМ UX
-4. Код должен быть полностью рабочим и self-contained
-5. Используй современные практики React (hooks, функциональные компоненты)
-6. ОБЯЗАТЕЛЬНО разделяй код на компоненты в /src/components/
-7. Делай сайты ИНТЕРАКТИВНЫМИ и ФУНКЦИОНАЛЬНЫМИ, а не просто статичными
-8. В deps ОБЯЗАТЕЛЬНО включи: "tailwindcss": "^3.4.0"
-
-ДИЗАЙН-ТРЕБОВАНИЯ (ОБЯЗАТЕЛЬНО):
-- Используй современные градиенты (bg-gradient-to-br, from-blue-500 to-purple-600)
-- Добавляй тени и hover эффекты (shadow-xl, hover:shadow-2xl, transition-all)
-- Делай отзывчивый дизайн (responsive breakpoints: sm:, md:, lg:, xl:)
-- Добавляй анимации (animate-fade-in, animate-bounce, группируй transition)
-- Используй красивую типографику (font-bold, text-4xl, leading-relaxed)
-- Добавляй иконки через emoji или SVG
-- Создавай пространство (py-8, px-6, gap-6, space-y-4)
-- Используй современные цвета (slate-900, indigo-500, emerald-400)
-
-ИНТЕРАКТИВНОСТЬ (ОБЯЗАТЕЛЬНО):
-- Добавляй useState для управления состоянием
-- Кнопки должны делать что-то полезное (не просто декорация)
-- Формы должны обрабатывать ввод данных
-- Добавляй модальные окна, тултипы, dropdown меню
-- Используй useEffect для сайд-эффектов
-- Добавляй localStorage для сохранения данных
-- Делай анимированные переходы между состояниями
-
-СТРУКТУРА КОМПОНЕНТОВ (РЕКОМЕНДУЕТСЯ):
-/src/App.tsx - главный компонент с логикой
-/src/components/Header.tsx - шапка сайта
-/src/components/Hero.tsx - главный блок
-/src/components/Features.tsx - секция преимуществ
-/src/components/Contact.tsx - форма контактов
-/src/components/Footer.tsx - подвал
-
-ПРИМЕРЫ ОТЛИЧНЫХ РЕШЕНИЙ:
-
-Для лендинга:
-- Hero с градиентом и CTA кнопкой
-- Секция с карточками преимуществ (минимум 3-6 карточек)
-- Форма подписки/контактов с валидацией
-- Testimonials с отзывами клиентов
-- Footer с социальными ссылками
-
-Для приложения:
-- Боковая навигация или табы
-- Интерактивные формы с обработкой данных
-- Модальные окна для действий
-- Анимированные списки (добавление/удаление)
-- Уведомления об успехе/ошибке
-
-Для игры:
-- Canvas или div-based рендеринг
-- Обработка клавиатуры/мыши
-- Система очков и рекордов
-- Кнопки управления для мобильных
-- Звуковые эффекты (опционально)
-
-СТРУКТУРА index.html:
-<!DOCTYPE html>
-<html lang="ru">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Название</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
-
-СТРУКТУРА main.tsx:
-import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App'
-import './index.css'
-
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)
-
-СТРУКТУРА index.css:
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-КАЧЕСТВО КОДА:
-- Пиши чистый, читаемый код с комментариями
-- Используй TypeScript типы (React.FC, useState<type>)
-- Группируй логику в хуки (useGameLogic, useFormValidation)
-- Выноси константы в верх файла
-- Используй деструктуризацию и spread оператор
-
-НЕ ДЕЛАЙ:
-❌ Простые статичные страницы с одним текстом
-❌ Минималистичные сайты без функционала
-❌ CDN загрузки (только NPM dependencies)
-❌ Inline стили (только Tailwind классы)
-
-ДЕЛАЙ:
-✅ Многокомпонентные проекты с хорошей архитектурой
-✅ Интерактивные элементы с реальным функционалом
-✅ Красивый modern дизайн с градиентами и анимациями
-✅ Адаптивность для всех экранов
-✅ Полезный UX с понятными действиями
-
-Отвечай ТОЛЬКО валидным JSON, без markdown форматирования, без комментариев.`;
-
-    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    const deepseekResponse = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -351,44 +396,220 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       },
       ...(proxyAgent && { dispatcher: proxyAgent }),
       body: JSON.stringify({
-        model: model,
+        model: model === 'lite' ? 'deepseek-chat' : model === 'pro' ? 'deepseek-reasoner' : model,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: prompt }
         ],
-        temperature: 0.7,
+        temperature: 0.3,
+        max_tokens: 2000, // Ограничиваем длину ответа для стабильности
       }),
     });
 
-    if (!openaiResponse.ok) {
-      const errorText = await openaiResponse.text();
-      console.error('OpenAI API error:', openaiResponse.status, errorText);
-      return res.status(openaiResponse.status).json({
-        error: 'OpenAI API error',
+    if (!deepseekResponse.ok) {
+      const errorText = await deepseekResponse.text();
+      console.error(`❌ DeepSeek API Error [Artifacts] | Status: ${deepseekResponse.status} ${deepseekResponse.statusText} | Model: ${model} | Error: ${errorText.substring(0, 500)}`);
+      return res.status(deepseekResponse.status).json({
+        error: 'DeepSeek API error',
         details: errorText
       });
     }
 
-    const data = await openaiResponse.json();
+    const data = await deepseekResponse.json();
     const content = data.choices?.[0]?.message?.content;
 
     if (!content) {
-      return res.status(500).json({ error: 'No content in OpenAI response' });
+      return res.status(500).json({ error: 'No content in DeepSeek response' });
     }
 
-    // Парсим JSON из ответа
+    // Парсим JSON из ответа (улучшенный парсинг для DeepSeek)
     let parsedData;
     try {
+      console.log('🔄 Raw DeepSeek response:', content.substring(0, 200) + '...');
+
       // Пытаемся извлечь JSON из markdown блока, если есть
-      const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/);
-      const jsonString = jsonMatch ? jsonMatch[1] : content;
-      parsedData = JSON.parse(jsonString.trim());
+      let jsonString = content;
+
+      // Удаляем markdown блоки
+      if (content.includes('```json')) {
+        const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+          jsonString = jsonMatch[1];
+        }
+      } else if (content.includes('```')) {
+        const jsonMatch = content.match(/```\s*([\s\S]*?)\s*```/);
+        if (jsonMatch) {
+          jsonString = jsonMatch[1];
+        }
+      }
+
+      // Если это не чистый JSON, пробуем найти начало и конец JSON объекта
+      jsonString = jsonString.trim();
+
+      // Находим начало JSON (первая {)
+      const startIndex = jsonString.indexOf('{');
+      if (startIndex !== -1) {
+        jsonString = jsonString.substring(startIndex);
+
+        // Пробуем найти конец JSON объекта, считая скобки с учетом экранирования
+        let braceCount = 0;
+        let endIndex = -1;
+        let inString = false;
+        let escapeNext = false;
+
+        for (let i = 0; i < jsonString.length; i++) {
+          const char = jsonString[i];
+
+          // Обработка экранирования в строках
+          if (escapeNext) {
+            escapeNext = false;
+            continue;
+          }
+
+          if (char === '\\') {
+            escapeNext = true;
+            continue;
+          }
+
+          // Обработка кавычек строк
+          if (char === '"' && !escapeNext) {
+            inString = !inString;
+            continue;
+          }
+
+          // Считаем скобки только вне строк
+          if (!inString) {
+            if (char === '{') {
+              braceCount++;
+            } else if (char === '}') {
+              braceCount--;
+              if (braceCount === 0) {
+                endIndex = i + 1;
+                break;
+              }
+            }
+          }
+        }
+
+        if (endIndex !== -1 && endIndex < jsonString.length) {
+          console.log('✂️ Truncated JSON at position:', endIndex);
+          jsonString = jsonString.substring(0, endIndex);
+        }
+      }
+
+      console.log('🔧 Final JSON string length:', jsonString.length);
+
+      // Улучшенный парсинг JSON с правильным учетом экранированных строк
+      function extractValidJson(text) {
+        let braceCount = 0;
+        let startIndex = -1;
+        let inString = false;
+        let escapeNext = false;
+
+        for (let i = 0; i < text.length; i++) {
+          const char = text[i];
+
+          // Обработка экранирования - следующий символ экранирован
+          if (escapeNext) {
+            escapeNext = false;
+            continue;
+          }
+
+          // Начинаем экранирование
+          if (char === '\\') {
+            escapeNext = true;
+            continue;
+          }
+
+          // Обработка кавычек - переключаем режим строки
+          if (char === '"' && !escapeNext) {
+            inString = !inString;
+            continue;
+          }
+
+          // Считаем скобки только вне строк
+          if (!inString) {
+            if (char === '{') {
+              if (startIndex === -1) startIndex = i;
+              braceCount++;
+            } else if (char === '}') {
+              braceCount--;
+              if (braceCount === 0 && startIndex !== -1) {
+                return text.substring(startIndex, i + 1);
+              }
+            }
+          }
+        }
+
+        return null;
+      }
+
+      // Пытаемся парсить JSON с JSON5 (более мягкий парсер)
+      try {
+        // Стратегия 1: JSON5 парсинг (более permissive)
+        parsedData = JSON5.parse(jsonString);
+        console.log('✅ JSON5 parsed successfully (direct)');
+      } catch (json5Error) {
+        console.log('🔄 JSON5 parsing failed, trying extraction...');
+
+        // Стратегия 2: Извлекаем JSON и пробуем JSON5
+        const extractedJson = extractValidJson(jsonString);
+        if (extractedJson) {
+          console.log('🔍 Extracted JSON length:', extractedJson.length);
+          try {
+            parsedData = JSON5.parse(extractedJson);
+            console.log('✅ JSON5 parsed successfully (extracted)');
+          } catch (extractError) {
+            console.log('🔄 JSON5 extraction failed, trying manual fixes...');
+
+            // Стратегия 3: Ручное исправление проблем
+            let fixedJson = extractedJson;
+
+            // Исправляем распространенные проблемы:
+            // 1. Убираем лишние экранирования в конце строк
+            fixedJson = fixedJson.replace(/\\n"([^"]*)"([^"]*)"\\n/g, '\\n"$1$2"\\n');
+
+            // 2. Исправляем неправильные экранированные кавычки
+            fixedJson = fixedJson.replace(/([^\\])\\"/g, '$1"');
+
+            // 3. Исправляем двойные кавычки в строках
+            fixedJson = fixedJson.replace(/"([^"]*)"([^"]*)""/g, '"$1$2"');
+
+            try {
+              parsedData = JSON5.parse(fixedJson);
+              console.log('✅ JSON5 parsed successfully (manual fixes)');
+            } catch (fixError) {
+              console.log('🔄 All JSON5 attempts failed, falling back...');
+              throw fixError;
+            }
+          }
+        } else {
+          throw json5Error;
+        }
+      }
+
+      console.log('🎯 Parsed JSON keys:', Object.keys(parsedData));
+
     } catch (parseError) {
-      console.error('Failed to parse JSON from OpenAI:', content);
-      return res.status(500).json({
-        error: 'Invalid JSON response from OpenAI',
-        content: content.substring(0, 500)
-      });
+      console.error(`❌ Artifact Parse Failed | Prompt: "${prompt?.substring(0, 100)}..." | Error: ${parseError.message} | Content length: ${content.length} chars`);
+      console.error(`📄 Content Preview (first 800 chars): ${content.substring(0, 800)}`);
+
+      // Emergency fallback - создаем простой сайт
+      console.log('🚨 Creating emergency fallback website...');
+      parsedData = {
+        assistantText: "Извините, возникла ошибка при генерации сайта. Создан простой сайт-заглушка. Попробуйте снова с более простой формулировкой.",
+        artifact: {
+          title: "Простой сайт",
+          files: {
+            "/index.html": "<!DOCTYPE html><html><head><title>Мой сайт</title></head><body><h1>Привет!</h1><p>Это простой сайт</p></body></html>",
+            "/src/main.tsx": "import React from 'react'; import ReactDOM from 'react-dom/client'; import App from './App'; ReactDOM.createRoot(document.getElementById('root')!).render(<App />);",
+            "/src/App.tsx": "import React from 'react'; export default function App() { return <div><h1>Привет мир!</h1><p>Это простой сайт</p></div>; }",
+            "/src/index.css": "@tailwind base; @tailwind components; @tailwind utilities;"
+          },
+          deps: { "react": "^18.2.0", "react-dom": "^18.2.0", "tailwindcss": "^3.4.0" }
+        }
+      };
+      console.log('✅ Emergency fallback website created');
     }
 
     // Валидация структуры
@@ -399,7 +620,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     // Проверка обязательных файлов
     const requiredFiles = ['/index.html', '/src/App.tsx', '/src/main.tsx', '/src/index.css'];
     const missingFiles = requiredFiles.filter(file => !parsedData.artifact.files[file]);
-    
+
     if (missingFiles.length > 0) {
       return res.status(500).json({
         error: 'Missing required files',
@@ -410,7 +631,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     res.json(parsedData);
 
   } catch (error) {
-    console.error('Error generating artifact:', error);
+    console.error(`❌ Artifact Generation Failed | Prompt: "${req.body?.prompt?.substring(0, 100) || 'none'}..." | Model: ${req.body?.model || 'deepseek-chat'} | Error: ${error.message || error} | Stack: ${error.stack?.substring(0, 200) || 'none'}...`);
     res.status(500).json({
       error: 'Failed to generate artifact',
       details: error.message
@@ -879,30 +1100,28 @@ app.get('/api/web-search', async (req, res) => {
   }
 });
 
-// MCP server proxy for web search
+// MCP server proxy for web search - использует локальный поиск вместо внешнего API
 app.post('/api/mcp/search', async (req, res) => {
   try {
-    console.log('🔍 MCP search proxy request:', req.body?.query);
+    const { q: query, max_results = 3 } = req.body;
+    console.log(`🔍 MCP search proxy request | Query: "${query}" | Max results: ${max_results}`);
 
-    const fetch = (await import('node-fetch')).default;
-
-      const mcpResponse = await fetch('https://ai.windexs.ru/api/mcp/search', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(req.body)
-    });
-
-    if (!mcpResponse.ok) {
-      throw new Error(`MCP server error: ${mcpResponse.status}`);
+    if (!query || typeof query !== 'string') {
+      console.error('❌ MCP search error: Query parameter is required');
+      return res.status(400).json({ error: 'Query parameter is required' });
     }
 
-    const data = await mcpResponse.json();
-    res.json(data);
+    // Используем локальный веб-поиск вместо внешнего API
+    const searchResults = await performWebSearch(query);
+    console.log(`✅ MCP search completed | Query: "${query}" | Results length: ${searchResults.length} chars`);
+
+    res.json({
+      answer: searchResults,
+      results: [] // Для совместимости с интерфейсом
+    });
 
   } catch (error) {
-    console.error('❌ MCP proxy error:', error);
+    console.error(`❌ MCP proxy error | Query: "${req.body?.q || 'none'}" | Error: ${error.message || error}`);
     res.status(500).json({
       error: 'MCP search failed',
       details: error.message
@@ -910,15 +1129,107 @@ app.post('/api/mcp/search', async (req, res) => {
   }
 });
 
-// OpenAI Chat API proxy (обход CORS ограничений)
+// Локальная функция веб-поиска (упрощенная версия из основного endpoint)
+async function performWebSearch(query) {
+  const lowerQuery = query.toLowerCase();
+
+  // Поиск криптовалют
+  if (lowerQuery.includes('биткоин') || lowerQuery.includes('bitcoin') || lowerQuery.includes('btc')) {
+    try {
+      const cryptoResponse = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,rub,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`, {
+        ...(proxyAgent && { dispatcher: proxyAgent }),
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; WindexsAI/1.0)',
+          'Accept': 'application/json'
+        }
+      });
+
+      if (cryptoResponse.ok) {
+        const cryptoData = await cryptoResponse.json();
+        const data = cryptoData.bitcoin;
+        if (data) {
+          return `Bitcoin:\n💰 Цена: $${data.usd} / ₽${data.rub} / €${data.eur}\n📊 Капитализация: $${data.usd_market_cap?.toLocaleString()}\n📈 Изменение 24ч: ${data.usd_24h_change?.toFixed(2)}%`;
+        }
+      }
+    } catch (cryptoError) {
+      console.error('Crypto API error:', cryptoError);
+    }
+  }
+
+  // Погода
+  if (lowerQuery.includes('погод') || lowerQuery.includes('weather')) {
+    try {
+      const weatherResponse = await fetch(`https://wttr.in/Moscow?format=%C+%t+%w+%h+%p&lang=ru`, {
+        ...(proxyAgent && { dispatcher: proxyAgent }),
+        headers: {
+          'User-Agent': 'curl/7.68.0'
+        }
+      });
+
+      if (weatherResponse.ok) {
+        const weatherText = await weatherResponse.text();
+        return `Погода в Москве: ${weatherText}`;
+      }
+    } catch (weatherError) {
+      console.error('Weather API error:', weatherError);
+    }
+  }
+
+  // Поиск в Wikipedia
+  try {
+    const wikiQuery = query.replace(/\s+/g, '_');
+    const wikiResponse = await fetch(`https://ru.wikipedia.org/api/rest_v1/page/summary/${wikiQuery}`, {
+      ...(proxyAgent && { dispatcher: proxyAgent })
+    });
+
+    if (wikiResponse.ok) {
+      const wikiData = await wikiResponse.json();
+      if (wikiData.extract) {
+        return `Из Wikipedia: ${wikiData.extract.substring(0, 800)}...`;
+      }
+    }
+  } catch (wikiError) {
+    console.error('Wikipedia search error:', wikiError);
+  }
+
+  // DuckDuckGo Instant Answer
+  try {
+    const duckResponse = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_redirect=1&no_html=1`, {
+      ...(proxyAgent && { dispatcher: proxyAgent }),
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; WindexsAI/1.0)',
+        'Accept': 'application/json'
+      }
+    });
+
+    if (duckResponse.ok) {
+      const duckData = await duckResponse.json();
+      if (duckData.Answer) {
+        return duckData.Answer;
+      }
+      if (duckData.AbstractText) {
+        return duckData.AbstractText;
+      }
+    }
+  } catch (duckError) {
+    console.error('DuckDuckGo search error:', duckError);
+  }
+
+  return 'Информация не найдена.';
+}
+
+// DeepSeek Chat API proxy (обход CORS ограничений)
 app.post('/api/chat', async (req, res) => {
   try {
-    console.log('🔥 API /chat request received:', req.body?.messages?.[req.body.messages.length - 1]?.content);
-    const { messages, model = 'gpt-4o-mini', stream = false } = req.body;
+    const lastMessage = req.body?.messages?.[req.body.messages.length - 1];
+    console.log(`🔥 API /chat | Requested: ${req.body?.model || 'lite'} | Stream: ${req.body?.stream || false} | User: ${req.body?.userId || 'none'} | Session: ${req.body?.sessionId || 'none'} | Messages: ${req.body?.messages?.length || 0} | Last message: "${lastMessage?.content?.substring(0, 100) || 'none'}..."`);
+    const { messages, model = 'lite', stream = false, userId, sessionId } = req.body;
 
     if (!messages || !Array.isArray(messages)) {
       return res.status(400).json({ error: 'Messages array is required' });
     }
+
+    const actualUserId = userId || 1; // Fallback to demo user if no userId provided
 
     // Проверяем на market query и добавляем данные
     const lastUserMessage = messages.filter(m => m.role === 'user').pop();
@@ -946,22 +1257,20 @@ app.post('/api/chat', async (req, res) => {
       }
     }
 
-    // Получаем API ключ из переменных окружения сервера
-    const apiKey = process.env.OPENAI_API_KEY;
+    // Получаем DeepSeek API ключ
+    const apiKey = process.env.DEEPSEEK_API_KEY;
     if (!apiKey) {
-      return res.status(500).json({ error: 'OpenAI API key not configured on server' });
+      return res.status(500).json({ error: 'DeepSeek API key not configured on server' });
     }
 
-    // Для GPT-5.1 используем GPT-4o как fallback, поскольку GPT-5.1 может быть недоступен
-    const actualModel = (model === 'gpt-5.1' || model.startsWith('gpt-5')) ? 'gpt-4o-mini' : model;
+    // Для pro модели используем deepseek-reasoner, для остальных deepseek-chat
+    const actualModel = (model === 'pro') ? 'deepseek-reasoner' : 'deepseek-chat';
+    const priceInfo = getTokenPrices(actualModel);
 
-    console.log('🎯 Using model:', actualModel, '(requested:', model, ')');
+    console.log(`🎯 Model Mapping | Requested: "${model}" → Actual: "${actualModel}" | Price: $${priceInfo.input}/1M in, $${priceInfo.output}/1M out | Stream: ${stream} | Messages: ${messages.length}`);
 
-    // GPT-5.1 не поддерживает streaming, поэтому всегда используем stream: false для него
-    const actualStream = (model === 'gpt-5.1' || model.startsWith('gpt-5')) ? false : stream;
-
-    // Все модели используют Chat Completions API
-    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+    // DeepSeek API
+    const deepseekResponse = await fetch('https://api.deepseek.com/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -971,42 +1280,123 @@ app.post('/api/chat', async (req, res) => {
       body: JSON.stringify({
         model: actualModel,
         messages: enhancedMessages,
-        stream: actualStream,
+        stream: stream,
         temperature: 0.7,
       }),
     });
 
-    if (!openaiResponse.ok) {
-      const errorText = await openaiResponse.text();
-      console.error('OpenAI API error:', openaiResponse.status, errorText);
-      return res.status(openaiResponse.status).json({
-        error: 'OpenAI API error',
+    if (!deepseekResponse.ok) {
+      const errorText = await deepseekResponse.text();
+      console.error(`❌ DeepSeek API Error [Artifacts] | Status: ${deepseekResponse.status} ${deepseekResponse.statusText} | Model: ${model} | Error: ${errorText.substring(0, 500)}`);
+      return res.status(deepseekResponse.status).json({
+        error: 'DeepSeek API error',
         details: errorText
       });
     }
 
     if (stream) {
-      // Для потоковых ответов передаем поток напрямую
+      // Для потоковых ответов обрабатываем поток для получения информации о токенах
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
 
-      const reader = openaiResponse.body.getReader();
+      const reader = deepseekResponse.body.getReader();
       const decoder = new TextDecoder();
+      let usageInfo = null;
 
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
           const chunk = decoder.decode(value);
+
+          // Проверяем, содержит ли чанк информацию об использовании токенов
+          if (chunk.includes('"usage"')) {
+            try {
+              // Парсим JSON для извлечения информации об использовании
+              const lines = chunk.split('\n');
+              for (const line of lines) {
+                if (line.startsWith('data: ') && line.includes('"usage"')) {
+                  const jsonStr = line.slice(6);
+                  const parsed = JSON.parse(jsonStr);
+                  if (parsed.usage) {
+                    usageInfo = parsed.usage;
+                  }
+                }
+              }
+            } catch (e) {
+              // Игнорируем ошибки парсинга
+            }
+          }
+
           res.write(chunk);
         }
+
+        // После завершения стрима добавляем информацию о токенах
+        if (usageInfo) {
+          const prices = getTokenPrices(actualModel);
+          const inputTokens = usageInfo.prompt_tokens || 0;
+          const outputTokens = usageInfo.completion_tokens || 0;
+          const totalTokens = usageInfo.total_tokens || (inputTokens + outputTokens);
+
+          const inputCost = (inputTokens / 1000000) * prices.input;
+          const outputCost = (outputTokens / 1000000) * prices.output;
+          const totalCost = inputCost + outputCost;
+
+          const tokenCostData = {
+            inputTokens,
+            outputTokens,
+            totalTokens,
+            inputCost,
+            outputCost,
+            totalCost,
+            model: actualModel
+          };
+
+          // Отправляем информацию о токенах в отдельном чанке
+          const tokenChunk = `data: ${JSON.stringify({ tokenCost: tokenCostData })}\n\n`;
+          res.write(tokenChunk);
+
+          // Записываем использование API в базу данных
+          try {
+            console.log(`📊 API Usage [STREAM] | User: ${actualUserId} | Model: ${actualModel} | Session: ${sessionId || 'none'} | Tokens: ${inputTokens} in + ${outputTokens} out = ${totalTokens} total | Cost: $${totalCost.toFixed(6)} | Input: $${inputCost.toFixed(6)} | Output: $${outputCost.toFixed(6)}`);
+            DatabaseService.recordApiUsage(
+              actualUserId,
+              sessionId || null,
+              actualModel,
+              inputTokens,
+              outputTokens,
+              totalCost,
+              'chat'
+            );
+
+            // Списываем средства с баланса пользователя
+            DatabaseService.updateUserBalance(actualUserId, -totalCost);
+            
+            // Создаем транзакцию
+            const lastUserMsg = messages.filter(m => m.role === 'user').pop();
+            const description = lastUserMsg 
+              ? `Chat: ${lastUserMsg.content.substring(0, 50)}...`
+              : 'Chat request';
+              
+            DatabaseService.createTransaction(
+              actualUserId,
+              'spend',
+              -totalCost,
+              description,
+              `chat_${Date.now()}`
+            );
+          } catch (dbError) {
+            console.error(`❌ DB Error [Stream Usage] | User: ${actualUserId} | Session: ${sessionId || 'none'} | Cost: $${totalCost.toFixed(6)} | Error: ${dbError.message || dbError}`);
+          }
+        }
+
       } finally {
         res.end();
       }
     } else {
       // Для обычных ответов возвращаем JSON
-      const data = await openaiResponse.json();
+      const data = await deepseekResponse.json();
 
       // Добавляем расчет стоимости токенов
       if (data.usage) {
@@ -1027,8 +1417,42 @@ app.post('/api/chat', async (req, res) => {
           outputCost,
           totalCost,
           model: actualModel,
-          currency: 'USD'
+          currency: 'USD',
+          provider: 'DeepSeek'
         };
+
+        // Записываем использование API в базу данных
+        try {
+          console.log(`📊 API Usage [NON-STREAM] | User: ${actualUserId} | Model: ${actualModel} | Session: ${sessionId || 'none'} | Tokens: ${inputTokens} in + ${outputTokens} out = ${totalTokens} total | Cost: $${totalCost.toFixed(6)} | Input: $${inputCost.toFixed(6)} | Output: $${outputCost.toFixed(6)}`);
+          DatabaseService.recordApiUsage(
+            actualUserId,
+            sessionId || null,
+            actualModel,
+            inputTokens,
+            outputTokens,
+            totalCost,
+            'chat'
+          );
+
+          // Списываем средства с баланса пользователя
+          DatabaseService.updateUserBalance(actualUserId, -totalCost);
+          
+          // Создаем транзакцию
+          const lastUserMsg = messages.filter(m => m.role === 'user').pop();
+          const description = lastUserMsg 
+            ? `Chat: ${lastUserMsg.content.substring(0, 50)}...`
+            : 'Chat request';
+            
+          DatabaseService.createTransaction(
+            actualUserId,
+            'spend',
+            -totalCost,
+            description,
+            `chat_${Date.now()}`
+          );
+        } catch (dbError) {
+          console.error(`❌ DB Error [Non-Stream Usage] | User: ${actualUserId} | Session: ${sessionId || 'none'} | Cost: $${totalCost.toFixed(6)} | Error: ${dbError.message || dbError}`);
+        }
       }
 
       // Возвращаем ответ в стандартном формате
@@ -1036,7 +1460,7 @@ app.post('/api/chat', async (req, res) => {
     }
 
   } catch (error) {
-    console.error('Chat API proxy error:', error);
+    console.error(`❌ Chat API Proxy Error | Model: ${req.body?.model || 'unknown'} | Messages: ${req.body?.messages?.length || 0} | Stream: ${req.body?.stream || false} | Error: ${error.message || error} | Stack: ${error.stack?.substring(0, 200) || 'none'}...`);
     res.status(500).json({
       error: 'Failed to process chat request',
       details: error.message
@@ -1044,58 +1468,7 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-// OpenAI TTS API proxy
-app.post('/api/tts', async (req, res) => {
-  try {
-    const { input, model = 'tts-1', voice = 'alloy', speed = 1.0 } = req.body;
-
-    if (!input) {
-      return res.status(400).json({ error: 'Input text is required' });
-    }
-
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: 'OpenAI API key not configured on server' });
-    }
-
-    const openaiResponse = await fetch('https://api.openai.com/v1/audio/speech', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      ...(proxyAgent && { dispatcher: proxyAgent }),
-      body: JSON.stringify({
-        model,
-        input,
-        voice,
-        response_format: 'mp3',
-        speed,
-      }),
-    });
-
-    if (!openaiResponse.ok) {
-      const errorText = await openaiResponse.text();
-      console.error('OpenAI TTS API error:', openaiResponse.status, errorText);
-      return res.status(openaiResponse.status).json({
-        error: 'OpenAI API error',
-        details: errorText
-      });
-    }
-
-    // Передаем аудио поток напрямую клиенту
-    const audioBuffer = await openaiResponse.arrayBuffer();
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.send(Buffer.from(audioBuffer));
-
-  } catch (error) {
-    console.error('TTS API proxy error:', error);
-    res.status(500).json({
-      error: 'Failed to process TTS request',
-      details: error.message
-    });
-  }
-});
+// TTS functionality removed - using only DeepSeek models
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -1176,6 +1549,241 @@ process.on('SIGINT', () => {
   console.log('🛑 Shutting down API server...');
   DatabaseService.close();
   process.exit(0);
+});
+
+// Отладочный маршрут для тестирования генерации сайтов
+app.post('/api/debug-generate-site', async (req, res) => {
+  try {
+    console.log('🔍 DEBUG GENERATE SITE REQUEST:', req.body);
+    const { prompt } = req.body;
+
+    // Импортируем функцию генерации
+    const { generateWebsiteArtifact } = await import('./src/lib/openai.js');
+
+    console.log('🚀 Calling generateWebsiteArtifact...');
+    const result = await generateWebsiteArtifact(prompt || 'создай сайт', 'deepseek-chat');
+
+    console.log('✅ generateWebsiteArtifact succeeded');
+    res.json({
+      success: true,
+      artifact: result.artifact,
+      assistantText: result.assistantText
+    });
+
+  } catch (error) {
+    console.error('❌ Debug generate site error:', error);
+    console.error('❌ Error stack:', error.stack);
+    res.status(500).json({
+      error: 'Generate site failed',
+      message: error.message,
+      stack: error.stack?.substring(0, 1000)
+    });
+  }
+});
+
+// Отладочный маршрут для тестирования генерации сайтов
+app.post('/api/debug-generate-site', async (req, res) => {
+  try {
+    console.log('🔍 DEBUG GENERATE SITE REQUEST:', req.body);
+    const { prompt } = req.body;
+
+    // Импортируем функцию генерации
+    const { generateWebsiteArtifact } = await import('./src/lib/openai.js');
+
+    console.log('🚀 Calling generateWebsiteArtifact...');
+    const result = await generateWebsiteArtifact(prompt || 'создай сайт', 'deepseek-chat');
+
+    console.log('✅ generateWebsiteArtifact succeeded');
+    res.json({
+      success: true,
+      artifact: result.artifact,
+      assistantText: result.assistantText
+    });
+
+  } catch (error) {
+    console.error('❌ Debug generate site error:', error);
+    console.error('❌ Error stack:', error.stack);
+    res.status(500).json({
+      error: 'Generate site failed',
+      message: error.message,
+      stack: error.stack?.substring(0, 1000)
+    });
+  }
+});
+
+// Отладочный маршрут для тестирования Vite структуры
+app.post('/api/debug-vite-structure', async (req, res) => {
+  try {
+    const { prompt } = req.body;
+
+    const testArtifact = {
+      title: "Тестовый сайт с Vite структурой",
+      files: {
+        "/index.html": `<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Тестовый сайт</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>`,
+        "/src/main.tsx": `import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+import './index.css'
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+)`,
+        "/src/App.tsx": `export default function App() {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center p-8">
+      <div className="text-center max-w-2xl">
+        <div className="text-6xl mb-6">🎯</div>
+        <h1 className="text-4xl font-bold text-gray-800 mb-4">
+          Структура исправлена!
+        </h1>
+        <p className="text-xl text-gray-600 mb-6">
+          Файлы теперь в правильных папках Vite
+        </p>
+        <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+          <h2 className="text-lg font-semibold text-gray-700 mb-3">✅ Исправлено:</h2>
+          <ul className="text-left space-y-2 text-gray-600">
+            <li>• index.html ссылается на /src/main.tsx</li>
+            <li>• main.tsx в папке /src/</li>
+            <li>• App.tsx в папке /src/</li>
+            <li>• index.css в папке /src/</li>
+            <li>• Правильные импорты между файлами</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  )
+}`,
+        "/src/index.css": `@tailwind base;
+@tailwind components;
+@tailwind utilities;`
+      },
+      deps: {
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0"
+      }
+    };
+
+    res.json({
+      success: true,
+      artifact: testArtifact,
+      assistantText: 'Тестовый сайт с правильной Vite структурой создан!'
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      error: 'Test failed',
+      message: error.message
+    });
+  }
+});
+
+// Тест исправленной структуры файлов
+app.post('/api/test-structure-fix', async (req, res) => {
+  try {
+    const { prompt } = req.body;
+
+    // Имитируем артефакт как от AI (файлы без путей)
+    const rawArtifact = {
+      title: "Тест исправленной структуры",
+      files: {
+        "index.html": `<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Тестовый сайт</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>`,
+        "main.tsx": `import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+import './index.css'
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+)`,
+        "App.tsx": `export default function App() {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center p-8">
+      <div className="text-center max-w-2xl">
+        <div className="text-6xl mb-6">✅</div>
+        <h1 className="text-4xl font-bold text-gray-800 mb-4">
+          Структура исправлена!
+        </h1>
+        <p className="text-xl text-gray-600 mb-6">
+          Файлы автоматически перемещены в правильные папки
+        </p>
+        <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+          <h2 className="text-lg font-semibold text-gray-700 mb-3">Исправления:</h2>
+          <ul className="text-left space-y-2 text-gray-600">
+            <li>• main.tsx → /src/main.tsx</li>
+            <li>• App.tsx → /src/App.tsx</li>
+            <li>• index.css → /src/index.css</li>
+            <li>• index.html с правильной ссылкой</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  )
+}`,
+        "index.css": `@tailwind base;
+@tailwind components;
+@tailwind utilities;`
+      },
+      deps: {
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0"
+      }
+    };
+
+    // Исправляем структуру файлов для Vite
+    const correctedFiles = {
+      '/index.html': rawArtifact.files['index.html'] || '<html><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>',
+      '/src/main.tsx': rawArtifact.files['main.tsx'] || 'console.log("main.tsx")',
+      '/src/App.tsx': rawArtifact.files['App.tsx'] || 'export default function App() { return <div>Hello</div>; }',
+      '/src/index.css': rawArtifact.files['index.css'] || 'body { margin: 0; }'
+    };
+
+    const correctedArtifact = {
+      ...rawArtifact,
+      files: correctedFiles
+    };
+
+    res.json({
+      success: true,
+      artifact: correctedArtifact,
+      assistantText: 'Структура файлов автоматически исправлена для Vite!',
+      debug: {
+        originalFiles: Object.keys(rawArtifact.files),
+        correctedFiles: Object.keys(correctedFiles)
+      }
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      error: 'Test failed',
+      message: error.message
+    });
+  }
 });
 
 process.on('SIGTERM', () => {

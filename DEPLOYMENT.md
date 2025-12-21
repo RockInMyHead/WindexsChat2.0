@@ -12,8 +12,8 @@
 PORT=80
 NODE_ENV=production
 
-# OpenAI API Key (обязательно!)
-OPENAI_API_KEY=your_actual_openai_api_key_here
+# DeepSeek API Key (обязательно!)
+DEEPSEEK_API_KEY=your_actual_deepseek_api_key_here
 
 # Proxy for external requests (опционально)
 PROXY_URL=http://your_proxy_url_here

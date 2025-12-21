@@ -39,22 +39,45 @@ export const AuthModal = ({ isOpen, onClose, onAuthSuccess, initialMessage }: Au
     e.preventDefault();
     setIsLoading(true);
 
-    // Имитация API вызова
-    setTimeout(() => {
-      const user = {
-        id: "1",
-        name: "Пользователь",
-        email: loginData.email
-      };
+    try {
+      // Вызываем API для получения/создания пользователя
+      const response = await fetch('/api/users/current', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: "temp", // Временный ID, API будет игнорировать его
+          name: "Пользователь",
+          email: loginData.email
+        })
+      });
 
-      // Сохраняем пользователя в localStorage
-      localStorage.setItem("user", JSON.stringify(user));
-      localStorage.setItem("isAuthenticated", "true");
+      if (response.ok) {
+        const user = await response.json();
+        console.log('✅ AuthModal: User authenticated:', user);
 
-      onAuthSuccess(user, initialMessage);
-      onClose();
+        // Сохраняем реального пользователя в localStorage
+        localStorage.setItem("user", JSON.stringify({
+          id: user.id.toString(),
+          name: user.username,
+          email: user.email
+        }));
+        localStorage.setItem("isAuthenticated", "true");
+
+        onAuthSuccess({
+          id: user.id.toString(),
+          name: user.username,
+          email: user.email
+        }, initialMessage);
+        onClose();
+      } else {
+        throw new Error('Authentication failed');
+      }
+    } catch (error) {
+      console.error('Login error:', error);
+      alert('Ошибка входа. Попробуйте еще раз.');
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -83,25 +106,52 @@ export const AuthModal = ({ isOpen, onClose, onAuthSuccess, initialMessage }: Au
       return;
     }
 
+    if (!registerData.agreeToTerms) {
+      alert("Пожалуйста, согласитесь с условиями использования");
+      return;
+    }
 
     setIsLoading(true);
 
-    // Имитация API вызова
-    setTimeout(() => {
-      const user = {
-        id: "2",
-        name: registerData.name,
-        email: registerData.email
-      };
+    try {
+      // Вызываем API для создания нового пользователя
+      const response = await fetch('/api/users/current', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: "temp", // Временный ID, API будет игнорировать его
+          name: registerData.name,
+          email: registerData.email
+        })
+      });
 
-      // Сохраняем пользователя в localStorage
-      localStorage.setItem("user", JSON.stringify(user));
-      localStorage.setItem("isAuthenticated", "true");
+      if (response.ok) {
+        const user = await response.json();
+        console.log('✅ AuthModal: User registered:', user);
 
-      onAuthSuccess(user, initialMessage);
-      onClose();
+        // Сохраняем реального пользователя в localStorage
+        localStorage.setItem("user", JSON.stringify({
+          id: user.id.toString(),
+          name: user.username,
+          email: user.email
+        }));
+        localStorage.setItem("isAuthenticated", "true");
+
+        onAuthSuccess({
+          id: user.id.toString(),
+          name: user.username,
+          email: user.email
+        }, initialMessage);
+        onClose();
+      } else {
+        throw new Error('Registration failed');
+      }
+    } catch (error) {
+      console.error('Registration error:', error);
+      alert('Ошибка регистрации. Попробуйте еще раз.');
+    } finally {
       setIsLoading(false);
-    }, 1000);
+    }
   };
 
   const resetForms = () => {

@@ -1,13 +1,66 @@
 import { useState, useEffect } from "react";
-import {
-  SandpackProvider,
-  SandpackLayout,
-  SandpackCodeEditor,
-  SandpackPreview
-} from "@codesandbox/sandpack-react";
 import { Button } from "@/components/ui/button";
-import { Copy, Check, Code, Eye, Download, AlertTriangle } from "lucide-react";
+import { Copy, Check, Code, Eye, Download, AlertTriangle, Play } from "lucide-react";
+import { Sandpack } from "@codesandbox/sandpack-react";
 import type { Artifact } from "@/lib/api";
+
+// Функция преобразования файлов артефакта в формат Sandpack
+function toSandpackFiles(artifactFiles: Record<string, string>) {
+  const files: Record<string, { code: string }> = {};
+
+  // Sandpack ожидает без ведущего '/', и стандартно под Vite template
+  for (const [path, code] of Object.entries(artifactFiles)) {
+    const normalized = path.startsWith("/") ? path.slice(1) : path;
+    files[`/${normalized}`] = { code };
+  }
+
+  // Страховка: если нет package.json — добавим минимальный
+  if (!files["/package.json"]) {
+    files["/package.json"] = {
+      code: JSON.stringify(
+        {
+          name: "artifact-preview",
+          private: true,
+          scripts: { dev: "vite", build: "vite build", preview: "vite preview" },
+          dependencies: { react: "^18.2.0", "react-dom": "^18.2.0" },
+          devDependencies: {
+            vite: "^5.0.0",
+            "@vitejs/plugin-react": "^4.0.0",
+            typescript: "^5.0.0"
+          }
+        },
+        null,
+        2
+      )
+    };
+  }
+
+  // Обработка Tailwind: для превью отключаем, чтобы не требовался config
+  const cssKey = "/src/index.css";
+  if (files[cssKey]?.code?.includes("@tailwind")) {
+    files[cssKey] = { code: "/* preview mode: tailwind disabled */\n" };
+  }
+
+  // Vite config (минимум)
+  if (!files["/vite.config.ts"]) {
+    files["/vite.config.ts"] = {
+      code: `import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+export default defineConfig({ plugins: [react()] });`
+    };
+  }
+
+  // tsconfig (минимум)
+  if (!files["/tsconfig.json"]) {
+    files["/tsconfig.json"] = { code: `{"compilerOptions":{"jsx":"react-jsx","target":"ES2020","module":"ESNext","moduleResolution":"Bundler","strict":false,"types":["vite/client"]}}` };
+  }
+
+  if (!files["/src/vite-env.d.ts"]) {
+    files["/src/vite-env.d.ts"] = { code: `/// <reference types="vite/client" />` };
+  }
+
+  return files;
+}
 
 interface WebsiteArtifactCardProps {
   artifact: Artifact;
@@ -16,40 +69,9 @@ interface WebsiteArtifactCardProps {
 
 export function WebsiteArtifactCard({ artifact, onUpdate }: WebsiteArtifactCardProps) {
   const [copied, setCopied] = useState(false);
-  const [viewMode, setViewMode] = useState<"preview" | "code">("preview");
-  const [sandpackError, setSandpackError] = useState<string | null>(null);
-
-  // Дополнительная обработка iframe после монтирования (страховка)
-  useEffect(() => {
-    if (sandpackError) return; // Не патчим если уже есть ошибка
-
-    const timer = setTimeout(() => {
-      const iframes = document.querySelectorAll('iframe[title*="Sandpack"]');
-      iframes.forEach((iframe) => {
-        // Убеждаемся что sandbox правильный (без allow-presentation)
-        const currentSandbox = iframe.getAttribute('sandbox') || '';
-        if (currentSandbox.includes('allow-presentation')) {
-          iframe.setAttribute('sandbox', [
-            'allow-scripts',
-            'allow-same-origin',
-            'allow-forms',
-            'allow-modals',
-            'allow-downloads'
-          ].join(' '));
-        }
-
-        // Убираем allow атрибут если он есть
-        if (iframe.hasAttribute('allow')) {
-          iframe.removeAttribute('allow');
-        }
-
-        // Убеждаемся что allowFullScreen отключен
-        iframe.removeAttribute('allowfullscreen');
-      });
-    }, 2000); // Даем время Sandpack загрузиться
-
-    return () => clearTimeout(timer);
-  }, [artifact.id, sandpackError]);
+  const [viewMode, setViewMode] = useState<"code" | "preview">("code");
+  const [selectedFile, setSelectedFile] = useState<string>(Object.keys(artifact.files)[0] || "");
+  const [sandpackError, setSandpackError] = useState<string>("");
 
   // Обработка ошибок Sandpack
   useEffect(() => {
@@ -64,26 +86,37 @@ export function WebsiteArtifactCard({ artifact, onUpdate }: WebsiteArtifactCardP
   }, []);
 
   const handleCopy = async () => {
-    const filesContent = Object.entries(artifact.files)
-      .map(([path, content]) => `// ${path}\n${content}`)
-      .join("\n\n---\n\n");
-    
-    await navigator.clipboard.writeText(filesContent);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      const filesContent = Object.entries(artifact.files)
+        .map(([path, content]) => `// ${path}\n${content}`)
+        .join("\n\n---\n\n");
+
+      await navigator.clipboard.writeText(filesContent);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy to clipboard:', error);
+      // Fallback: показать код в alert
+      const filesContent = Object.entries(artifact.files)
+        .map(([path, content]) => `// ${path}\n${content}`)
+        .join("\n\n---\n\n");
+      alert(`Код скопирован в буфер обмена:\n\n${filesContent.slice(0, 500)}${filesContent.length > 500 ? '\n\n...' : ''}`);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   const handleDownload = () => {
-    // Создаем ZIP-подобную структуру (или просто объединяем файлы)
+    // Создаем архив всех файлов
     const filesContent = Object.entries(artifact.files)
-      .map(([path, content]) => `// ${path}\n${content}`)
-      .join("\n\n---\n\n");
-    
+      .map(([path, content]) => `=== ${path} ===\n${content}`)
+      .join("\n\n");
+
     const blob = new Blob([filesContent], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${artifact.title.replace(/[^a-z0-9]/gi, "_").toLowerCase()}.txt`;
+    a.download = `${artifact.title.replace(/[^a-z0-9]/gi, "_").toLowerCase()}_project.txt`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -106,145 +139,168 @@ export function WebsiteArtifactCard({ artifact, onUpdate }: WebsiteArtifactCardP
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        {/* Переключатель режимов просмотра */}
+        <div className="flex items-center gap-1 bg-secondary rounded-lg p-1">
           <Button
-            variant={viewMode === "preview" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setViewMode("preview")}
-            className="h-8"
-          >
-            <Eye className="h-4 w-4 mr-1" />
-            Превью
-          </Button>
-          <Button
-            variant={viewMode === "code" ? "default" : "outline"}
+            variant={viewMode === "code" ? "default" : "ghost"}
             size="sm"
             onClick={() => setViewMode("code")}
-            className="h-8"
+            className="h-7 px-3"
           >
-            <Code className="h-4 w-4 mr-1" />
+            <Code className="h-3 w-3 mr-1" />
             Код
           </Button>
+          <Button
+            variant={viewMode === "preview" ? "default" : "ghost"}
+            size="sm"
+            onClick={() => setViewMode("preview")}
+            className="h-7 px-3"
+          >
+            <Eye className="h-3 w-3 mr-1" />
+            Превью
+          </Button>
+        </div>
+
+        <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
             onClick={handleDownload}
             className="h-8"
-            title="Скачать код"
+            title="Скачать все файлы"
           >
-            <Download className="h-4 w-4" />
+            <Download className="h-4 w-4 mr-1" />
+            Скачать проект
           </Button>
           <Button
             variant="outline"
             size="sm"
             onClick={handleCopy}
             className="h-8"
-            title="Копировать код"
+            title="Копировать все файлы"
           >
             {copied ? (
-              <Check className="h-4 w-4 text-green-500" />
+              <>
+                <Check className="h-4 w-4 mr-1 text-green-500" />
+                Скопировано
+              </>
             ) : (
-              <Copy className="h-4 w-4" />
+              <>
+                <Copy className="h-4 w-4 mr-1" />
+                Копировать все
+              </>
             )}
           </Button>
         </div>
       </div>
 
-      {/* Sandpack Editor */}
-      <div className="rounded-lg overflow-hidden border border-border shadow-inner">
-        {sandpackError ? (
-          <div className="flex flex-col items-center justify-center p-8 text-center">
-            <AlertTriangle className="h-12 w-12 text-yellow-500 mb-4" />
-            <h4 className="text-lg font-semibold mb-2">Ошибка загрузки редактора</h4>
-            <p className="text-sm text-muted-foreground mb-4">{sandpackError}</p>
-            <Button
-              onClick={() => setSandpackError(null)}
-              variant="outline"
-              size="sm"
-              className="mb-4"
-            >
-              Попробовать еще раз
-            </Button>
-            <div className="text-xs bg-muted p-3 rounded max-w-full overflow-x-auto">
-              <strong>Код проекта:</strong>
-              <pre className="mt-2 whitespace-pre-wrap text-left">
-                {Object.entries(artifact.files).map(([path, content]) => (
-                  <div key={path} className="mb-2">
-                    <div className="font-medium text-blue-600">{path}:</div>
-                    <div className="text-gray-700 font-mono text-xs">{content.slice(0, 200)}{content.length > 200 ? '...' : ''}</div>
-                  </div>
-                ))}
-              </pre>
+      {/* Code/Preview Viewer */}
+      {viewMode === "preview" ? (
+        /* Sandpack Preview */
+        <div className="rounded-lg overflow-hidden border border-border shadow-inner">
+          {sandpackError ? (
+            <div className="p-4 text-center text-red-500 dark:text-red-400">
+              <AlertTriangle className="h-8 w-8 mx-auto mb-2" />
+              <p className="text-sm">{sandpackError}</p>
             </div>
+          ) : (
+            <Sandpack
+              template="vite-react-ts"
+              files={toSandpackFiles(artifact.files)}
+              options={{
+                showNavigator: true,
+                showTabs: true,
+                showLineNumbers: true,
+                editorHeight: 420,
+                showConsole: true,
+                showConsoleButton: true
+              }}
+              theme="dark"
+            />
+          )}
+        </div>
+      ) : (
+        /* Code Viewer */
+        <div className="rounded-lg overflow-hidden border border-border shadow-inner bg-slate-50 dark:bg-slate-900">
+          <div className="flex border-b border-border">
+            {Object.keys(artifact.files).map((filePath) => (
+              <button
+                key={filePath}
+                onClick={() => setSelectedFile(filePath)}
+                className={`px-4 py-2 text-sm font-medium border-r border-border last:border-r-0 transition-colors ${
+                  selectedFile === filePath
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                }`}
+              >
+                {filePath.split('/').pop()}
+              </button>
+            ))}
           </div>
-        ) : (
-          <SandpackProvider
-            template="react-ts"
-            files={artifact.files}
-            customSetup={{
-              dependencies: {
-                "react": "^18.2.0",
-                "react-dom": "^18.2.0",
-                "tailwindcss": "^3.4.0",
-                ...artifact.deps
-              }
-            }}
-            options={{
-              activeFile: "/src/App.tsx",
-              visibleFiles: viewMode === "code" ? undefined : ["/src/App.tsx", "/src/index.css"],
-              closableTabs: false,
-            }}
-            theme="auto"
-          >
-            <SandpackLayout>
-              {viewMode === "code" && (
-                <SandpackCodeEditor
-                  showTabs={true}
-                  showLineNumbers={true}
-                  showInlineErrors={false}
-                  closableTabs={false}
-                  style={{ height: "500px" }}
-                />
-              )}
-              <SandpackPreview
-                showOpenInCodeSandbox={false}
-                showOpenNewtab={false}
-                showRefreshButton={true}
-                showNavigator={viewMode === "preview"}
-                style={{ height: viewMode === "code" ? "400px" : "500px" }}
-                iframeProps={{
-                  // Важно: без allow-presentation (Safari не поддерживает)
-                  sandbox: [
-                    "allow-scripts",
-                    "allow-same-origin",
-                    "allow-forms",
-                    "allow-modals",
-                    "allow-downloads",
-                    // убраны: "allow-popups", "allow-presentation"
-                  ].join(" "),
-                  // Убираем permission policy предупреждения
-                  allow: "",
-                  allowFullScreen: false as any,
-                  // Дополнительные атрибуты для стабильности
-                  referrerPolicy: "no-referrer",
-                  loading: "lazy" as any,
-                }}
-                onError={(error) => {
-                  console.error('Sandpack preview error:', error);
-                  if (error?.message?.includes('sandbox') || error?.message?.includes('presentation')) {
-                    setSandpackError('Sandpack временно недоступен из-за ограничений браузера. Попробуйте перезагрузить страницу.');
-                  }
-                }}
-              />
-            </SandpackLayout>
-          </SandpackProvider>
-        )}
-      </div>
+
+          <div className="p-4">
+            {selectedFile && artifact.files[selectedFile] ? (
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                    {selectedFile}
+                  </h4>
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => {
+                        const code = artifact.files[selectedFile];
+                        navigator.clipboard.writeText(code).then(() => {
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        });
+                      }}
+                      variant="outline"
+                      size="sm"
+                      className="h-7"
+                    >
+                      {copied ? (
+                        <Check className="h-3 w-3 text-green-500" />
+                      ) : (
+                        <Copy className="h-3 w-3" />
+                      )}
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        const blob = new Blob([artifact.files[selectedFile]], { type: 'text/plain' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = selectedFile.split('/').pop() || 'file.txt';
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      variant="outline"
+                      size="sm"
+                      className="h-7"
+                    >
+                      <Download className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+
+                <pre className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-md p-4 overflow-x-auto text-sm font-mono text-slate-800 dark:text-slate-200 max-h-96 overflow-y-auto">
+                  <code>{artifact.files[selectedFile]}</code>
+                </pre>
+              </div>
+            ) : (
+              <div className="text-center py-8 text-slate-500 dark:text-slate-400">
+                <Code className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>Выберите файл для просмотра</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
         <div className="flex items-center gap-4">
-          <span>✨ Интерактивный редактор и превью</span>
+          <span>📝 Просмотр и редактирование кода</span>
           {artifact.deps && Object.keys(artifact.deps).length > 0 && (
             <span>📦 {Object.keys(artifact.deps).length} зависимостей</span>
           )}

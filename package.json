@@ -63,6 +63,7 @@
     "embla-carousel-react": "^8.6.0",
     "express": "^5.1.0",
     "input-otp": "^1.4.2",
+    "json5": "^2.2.3",
     "katex": "^0.16.25",
     "lightweight-charts": "^5.1.0",
     "lucide-react": "^0.462.0",

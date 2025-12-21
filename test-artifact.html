@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Artifact Card</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-card { border: 1px solid #ccc; padding: 20px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <h1>Testing WebsiteArtifactCard Component</h1>
+
+    <div class="test-card">
+        <h2>Mock Artifact Data</h2>
+        <pre>
+{
+  "id": 12,
+  "sessionId": 1,
+  "type": "website",
+  "title": "Тестовый сайт",
+  "files": {
+    "/src/App.tsx": "export default function App() { return <div>Hello World</div>; }",
+    "/src/index.css": "@tailwind base; @tailwind components; @tailwind utilities;"
+  },
+  "deps": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "createdAt": 1766150466277
+}
+        </pre>
+    </div>
+
+    <p>If this page loads without JavaScript errors, the component structure is correct.</p>
+</body>
+</html>

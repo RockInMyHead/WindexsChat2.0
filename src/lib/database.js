@@ -58,13 +58,65 @@ const createTables = () => {
     )
   `);
 
+  // Таблица пользователей/кошельков
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE,
+      email TEXT UNIQUE,
+      balance REAL NOT NULL DEFAULT 0.0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+
+  // Таблица транзакций
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      type TEXT NOT NULL CHECK (type IN ('deposit', 'spend', 'refund')),
+      amount REAL NOT NULL,
+      description TEXT,
+      reference_id TEXT, -- ID связанного запроса/API вызова
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+    )
+  `);
+
+  // Таблица использования API (для учета токенов)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS api_usage (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
+      session_id INTEGER,
+      model TEXT NOT NULL,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      cost REAL NOT NULL DEFAULT 0.0,
+      request_type TEXT NOT NULL, -- 'chat', 'planning', 'website_generation', 'tts'
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL,
+      FOREIGN KEY (session_id) REFERENCES chat_sessions (id) ON DELETE SET NULL
+    )
+  `);
+
   // Миграция: Добавляем колонку artifact_id в messages, если её нет
   const columns = db.prepare("PRAGMA table_info(messages)").all();
   const hasArtifactId = columns.some(col => col.name === 'artifact_id');
-  
+
   if (!hasArtifactId) {
     console.log('Migrating database: adding artifact_id column to messages table');
     db.exec(`ALTER TABLE messages ADD COLUMN artifact_id INTEGER`);
+  }
+
+  // Миграция: Добавляем колонку user_id в messages, если её нет
+  const hasUserId = columns.some(col => col.name === 'user_id');
+
+  if (!hasUserId) {
+    console.log('Migrating database: adding user_id column to messages table');
+    db.exec(`ALTER TABLE messages ADD COLUMN user_id INTEGER REFERENCES users (id)`);
   }
 
   // Индексы для производительности
@@ -72,7 +124,13 @@ const createTables = () => {
     CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages (session_id);
     CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages (timestamp);
     CREATE INDEX IF NOT EXISTS idx_messages_artifact_id ON messages (artifact_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages (user_id);
     CREATE INDEX IF NOT EXISTS idx_artifacts_session_id ON artifacts (session_id);
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+    CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions (user_id);
+    CREATE INDEX IF NOT EXISTS idx_transactions_created_at ON transactions (created_at);
+    CREATE INDEX IF NOT EXISTS idx_api_usage_user_id ON api_usage (user_id);
+    CREATE INDEX IF NOT EXISTS idx_api_usage_created_at ON api_usage (created_at);
   `);
 };
 
@@ -142,6 +200,69 @@ const getArtifactsBySessionStmt = db.prepare(`
   FROM artifacts
   WHERE session_id = ?
   ORDER BY created_at DESC
+`);
+
+// Пользователи и кошелек
+const insertUserStmt = db.prepare(`
+  INSERT OR IGNORE INTO users (username, email, balance, created_at, updated_at)
+  VALUES (?, ?, ?, ?, ?)
+`);
+
+const getUserByIdStmt = db.prepare(`
+  SELECT id, username, email, balance, created_at, updated_at
+  FROM users
+  WHERE id = ?
+`);
+
+const getUserByEmailStmt = db.prepare(`
+  SELECT id, username, email, balance, created_at, updated_at
+  FROM users
+  WHERE email = ?
+`);
+
+const updateUserBalanceStmt = db.prepare(`
+  UPDATE users
+  SET balance = balance + ?, updated_at = ?
+  WHERE id = ?
+`);
+
+// Транзакции
+const insertTransactionStmt = db.prepare(`
+  INSERT INTO transactions (user_id, type, amount, description, reference_id, created_at)
+  VALUES (?, ?, ?, ?, ?, ?)
+`);
+
+const getTransactionsByUserStmt = db.prepare(`
+  SELECT id, user_id, type, amount, description, reference_id, created_at
+  FROM transactions
+  WHERE user_id = ?
+  ORDER BY created_at DESC
+  LIMIT ?
+`);
+
+// API использование
+const insertApiUsageStmt = db.prepare(`
+  INSERT INTO api_usage (user_id, session_id, model, input_tokens, output_tokens, total_tokens, cost, request_type, created_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`);
+
+const getApiUsageByUserStmt = db.prepare(`
+  SELECT id, user_id, session_id, model, input_tokens, output_tokens, total_tokens, cost, request_type, created_at
+  FROM api_usage
+  WHERE user_id = ?
+  ORDER BY created_at DESC
+  LIMIT ?
+`);
+
+const getTotalApiUsageByUserStmt = db.prepare(`
+  SELECT
+    SUM(input_tokens) as total_input_tokens,
+    SUM(output_tokens) as total_output_tokens,
+    SUM(total_tokens) as total_tokens,
+    SUM(cost) as total_cost,
+    COUNT(*) as total_requests
+  FROM api_usage
+  WHERE user_id = ?
 `);
 
 // Сервис для работы с базой данных
@@ -243,6 +364,99 @@ export class DatabaseService {
       createdAt: row.created_at,
       updatedAt: row.updated_at
     }));
+  }
+
+  // Работа с пользователями и кошельком
+  static createUser(username, email, initialBalance = 0.0) {
+    const now = Date.now();
+    const result = insertUserStmt.run(username, email, initialBalance, now, now);
+    return result.lastInsertRowid;
+  }
+
+  static getUserById(userId) {
+    const row = getUserByIdStmt.get(userId);
+    if (!row) return null;
+    return {
+      id: row.id,
+      username: row.username,
+      email: row.email,
+      balance: row.balance,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
+  static getUserByEmail(email) {
+    const row = getUserByEmailStmt.get(email);
+    if (!row) return null;
+    return {
+      id: row.id,
+      username: row.username,
+      email: row.email,
+      balance: row.balance,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    };
+  }
+
+  static updateUserBalance(userId, amount) {
+    const now = Date.now();
+    updateUserBalanceStmt.run(amount, now, userId);
+  }
+
+  // Работа с транзакциями
+  static createTransaction(userId, type, amount, description = '', referenceId = null) {
+    const now = Date.now();
+    const result = insertTransactionStmt.run(userId, type, amount, description, referenceId, now);
+    return result.lastInsertRowid;
+  }
+
+  static getTransactionsByUser(userId, limit = 50) {
+    const rows = getTransactionsByUserStmt.all(userId, limit);
+    return rows.map(row => ({
+      id: row.id,
+      userId: row.user_id,
+      type: row.type,
+      amount: row.amount,
+      description: row.description,
+      referenceId: row.reference_id,
+      createdAt: row.created_at
+    }));
+  }
+
+  // Работа с API использованием
+  static recordApiUsage(userId, sessionId, model, inputTokens, outputTokens, cost, requestType) {
+    const now = Date.now();
+    const totalTokens = inputTokens + outputTokens;
+    const result = insertApiUsageStmt.run(userId, sessionId, model, inputTokens, outputTokens, totalTokens, cost, requestType, now);
+    return result.lastInsertRowid;
+  }
+
+  static getApiUsageByUser(userId, limit = 100) {
+    const rows = getApiUsageByUserStmt.all(userId, limit);
+    return rows.map(row => ({
+      id: row.id,
+      userId: row.user_id,
+      sessionId: row.session_id,
+      model: row.model,
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      totalTokens: row.total_tokens,
+      cost: row.cost,
+      requestType: row.request_type,
+      createdAt: row.created_at
+    }));
+  }
+
+  static getTotalApiUsageByUser(userId) {
+    const row = getTotalApiUsageByUserStmt.get(userId);
+    return {
+      totalInputTokens: row.total_input_tokens || 0,
+      totalOutputTokens: row.total_output_tokens || 0,
+      totalTokens: row.total_tokens || 0,
+      totalCost: row.total_cost || 0,
+      totalRequests: row.total_requests || 0
+    };
   }
 
   // Закрытие соединения с БД (для cleanup)

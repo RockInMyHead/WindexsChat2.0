@@ -1,5 +1,6 @@
 import { API_BASE_URL } from './api';
 import { isMarketQuery } from './market';
+import JSON5 from 'json5';
 
 // Интерфейс для информации о стоимости токенов
 export interface TokenCost {
@@ -12,18 +13,16 @@ export interface TokenCost {
   model: string;
 }
 
-// Стоимость токенов за 1M токенов в долларах (на декабрь 2025)
+// Стоимость токенов за 1M токенов в долларах (DeepSeek models)
 const TOKEN_PRICES = {
-  'gpt-4o-mini': { input: 0.15, output: 0.60 },
-  'gpt-4o': { input: 2.50, output: 10.00 },
-  'gpt-5.1': { input: 5.00, output: 15.00 },
-  'gpt-4o-mini-pro': { input: 0.15, output: 0.60 }, // fallback для pro режима
+  'deepseek-chat': { input: 0.07, output: 1.10 },
+  'deepseek-reasoner': { input: 0.55, output: 2.19 },
 };
 
 // Функция расчета стоимости токенов
 export const calculateTokenCost = (usage: any, model: string): TokenCost => {
   const actualModel = getActualModel(model);
-  const prices = TOKEN_PRICES[actualModel] || TOKEN_PRICES['gpt-4o-mini'];
+  const prices = TOKEN_PRICES[actualModel] || TOKEN_PRICES['deepseek-chat'];
 
   const inputTokens = usage?.prompt_tokens || 0;
   const outputTokens = usage?.completion_tokens || 0;
@@ -135,7 +134,7 @@ const searchWeb = async (query: string): Promise<string> => {
         },
         mode: 'cors',
         body: JSON.stringify({
-          query: enhancedQuery,
+          q: enhancedQuery,
           max_results: 5
         })
       });
@@ -663,7 +662,10 @@ const handleAdvancedModelLogic = async (
   onSearchProgress?: (queries: string[]) => void,
   internetEnabled?: boolean
 ): Promise<string> => {
-  console.log('🎯 Using ADVANCED model logic for:', selectedModel, 'with internet:', internetEnabled);
+  const actualModel = getActualModel(selectedModel);
+  // ✅ FIX: modelParams объявляем ДО любых ветвлений
+  const modelParams = getModelParams(selectedModel);
+  console.log(`🎯 Advanced Logic Start | Selected: ${selectedModel} → DeepSeek: ${actualModel} | Internet: ${internetEnabled} | Query: "${userMessage.content.substring(0, 100)}..." (${userMessage.content.length} chars)`);
 
   // ПРОВЕРКА НА ПРОСТЫЕ ЗАПРОСЫ - они не должны проходить через планирование
   const lowerQuery = userMessage.content.toLowerCase().trim();
@@ -690,20 +692,19 @@ const handleAdvancedModelLogic = async (
   const isSimpleOneWordQuestion = lowerQuery.split(/\s+/).length <= 2 && lowerQuery.length < 20;
 
   if (isVerySimpleQuery || isTooShort || isOnlyEmojis || isMathExpression || isSimpleOneWordQuestion) {
-    console.log('🎯 Simple query detected in advanced mode, returning direct response:', {
-      isVerySimpleQuery,
-      isMathExpression,
-      isTooShort,
-      isOnlyEmojis,
-      isSimpleOneWordQuestion
-    });
+    const reasons = [];
+    if (isVerySimpleQuery) reasons.push('very-simple');
+    if (isMathExpression) reasons.push('math-expression');
+    if (isTooShort) reasons.push('too-short');
+    if (isOnlyEmojis) reasons.push('only-emojis');
+    if (isSimpleOneWordQuestion) reasons.push('one-word');
+    console.log(`🎯 Simple Query Detected | Query: "${originalQuery}" | Reasons: ${reasons.join(', ')} | Returning direct response`);
     
     // Для математических выражений используем обычный режим без простого ответа
     if (isMathExpression) {
-      console.log('📐 Math expression detected, using standard model without planning');
+      console.log(`📐 Math Expression | Query: "${originalQuery}" | Using standard model without planning`);
       // Используем стандартную модель без планирования
       const actualModel = getActualModel(selectedModel);
-      const modelParams = getModelParams(selectedModel);
       
       const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
@@ -778,30 +779,36 @@ const handleAdvancedModelLogic = async (
   }
 
   // ШАГ 1: Генерируем план выполнения задачи
-  console.log('📋 Step 1: Generating response plan');
+  console.log(`📋 Step 1: Plan Generation | Query: "${userMessage.content}" (${userMessage.content.length} chars) | Model: ${selectedModel}`);
   let plan: PlanStep[] = [];
   try {
     plan = await generateResponsePlan(userMessage.content, selectedModel);
-    console.log('✅ Plan generated:', plan.length, 'steps');
+    const totalQueries = plan.reduce((sum, step) => sum + (step.searchQueries?.length || 0), 0);
+    console.log(`✅ Plan Generated | Steps: ${plan.length} | Total search queries: ${totalQueries}`);
 
     // Отправляем план в UI
     if (onPlanGenerated) {
       onPlanGenerated(plan);
     }
-  } catch (error) {
-    console.error('❌ Failed to generate plan:', error);
+  } catch (error: any) {
+    // Обрабатываем разные типы ошибок
+    const isAborted = error.name === 'AbortError' || error.message?.includes('aborted');
+    const isGeoBlocked = error.message?.includes('unsupported_country_region_territory') ||
+                        error.message?.includes('Country, region, or territory not supported') ||
+                        error.message?.includes('403 Forbidden');
 
-    // Проверяем, является ли ошибка гео-ограничением
-    const isGeoBlocked = error.message.includes('unsupported_country_region_territory') ||
-                        error.message.includes('Country, region, or territory not supported') ||
-                        error.message.includes('403 Forbidden');
-
-    if (isGeoBlocked) {
-      console.log('🌍 Geo-blocking detected, falling back to basic mode without planning');
+    if (isAborted) {
+      console.warn(`⚠️ Plan Generation Aborted | Query: "${userMessage.content.substring(0, 80)}..." | Reason: Request aborted (timeout or cancelled) | Continuing without plan`);
       if (onChunk) {
-        onChunk("🌍 Обнаружено гео-ограничение OpenAI. Регион не поддерживается для продвинутых функций. Переключаюсь в обычный режим...\n\n");
+        onChunk("⏱️ Генерация плана заняла слишком много времени. Продолжаю с прямым ответом...\n\n");
+      }
+    } else if (isGeoBlocked) {
+      console.warn(`🌍 Plan Generation Geo-Blocked | Query: "${userMessage.content.substring(0, 80)}..." | Error type: geo-restriction | Falling back to basic mode`);
+      if (onChunk) {
+        onChunk("🌍 Обнаружено гео-ограничение. Регион не поддерживается для продвинутых функций. Переключаюсь в обычный режим...\n\n");
       }
     } else {
+      console.error(`❌ Plan Generation Failed | Query: "${userMessage.content.substring(0, 80)}..." | Error: ${error.message || error} | Type: ${error.name || 'unknown'} | Stack: ${error.stack?.substring(0, 200) || 'none'}...`);
       if (onChunk) {
         onChunk("⚠️ Планирование не удалось, продолжаю с прямым анализом...\n\n");
       }
@@ -813,22 +820,26 @@ const handleAdvancedModelLogic = async (
 
   // ШАГ 2: Выполняем поиск в интернете если план требует этого
   let searchResults = '';
-  if (plan.some(step => step.searchQueries && step.searchQueries.length > 0) && internetEnabled !== false) {
-    console.log('🔍 Step 2: Executing internet search for plan');
+  const planHasQueries = plan.some(step => step.searchQueries && step.searchQueries.length > 0);
+  if (planHasQueries && internetEnabled !== false) {
+    // Собираем все поисковые запросы
+    const allSearchQueries = plan.flatMap(step =>
+      step.searchQueries ? step.searchQueries.map(sq => ({ query: sq.query, purpose: sq.purpose })) : []
+    );
+
+    console.log(`🔍 Step 2: Internet Search | Queries: ${allSearchQueries.length} | Plan steps: ${plan.length} | Internet enabled: ${internetEnabled}`);
+    const queriesList = allSearchQueries.map((sq, i) => `${i + 1}. "${sq.query}" (${sq.purpose})`).join(' | ');
+    console.log(`📊 Search Queries: ${queriesList}`);
 
     try {
-      // Собираем все поисковые запросы
-      const allSearchQueries = plan.flatMap(step =>
-        step.searchQueries ? step.searchQueries.map(sq => ({ query: sq.query, purpose: sq.purpose })) : []
-      );
-
-      console.log('📊 Total search queries:', allSearchQueries.length);
       if (onSearchProgress) {
         onSearchProgress(allSearchQueries.map(sq => sq.query));
       }
 
       // Выполняем параллельный поиск
       const allSearchResults = await executeParallelSearches(plan, onSearchProgress);
+      const successfulResults = Array.from(allSearchResults.values()).filter(r => r && r !== '[NO_RESULTS_FOUND]').length;
+      console.log(`🔍 Search Execution | Total queries: ${allSearchResults.size} | Successful: ${successfulResults} | Failed: ${allSearchResults.size - successfulResults}`);
 
       // Форматируем результаты поиска по шагам
       let searchContext = '';
@@ -854,12 +865,17 @@ const handleAdvancedModelLogic = async (
 
         // Ограничиваем размер результатов поиска
         const maxSearchLength = selectedModel === 'pro' ? 15000 : 8000;
+        const originalLength = searchContext.length;
         searchResults = searchContext.length > maxSearchLength
           ? searchContext.substring(0, maxSearchLength) + '\n\n[Результаты поиска сокращены для эффективности]'
           : searchContext;
+        
+        if (originalLength > maxSearchLength) {
+          console.log(`📏 Search Results Truncated | Original: ${originalLength} chars → ${maxSearchLength} chars (limit for ${selectedModel})`);
+        }
       }
 
-      console.log('✅ Search completed, results length:', searchResults.length);
+      console.log(`✅ Search Completed | Results length: ${searchResults.length} chars | Context length: ${searchContext.length} chars`);
 
       // Уведомляем UI о начале каждого шага
       plan.forEach((step, stepIndex) => {
@@ -877,10 +893,7 @@ const handleAdvancedModelLogic = async (
   }
 
   // ШАГ 3: Генерируем финальный ответ
-  console.log('🎯 Step 3: Generating final answer');
-
-  const actualModel = getActualModel(selectedModel);
-  const modelParams = getModelParams(selectedModel);
+  // actualModel уже объявлен выше
 
   // Формируем системное сообщение
   let systemPrompt: string;
@@ -895,7 +908,7 @@ const handleAdvancedModelLogic = async (
       : `АКТУАЛЬНЫЕ ДАННЫЕ ПО BITCOIN:\n${marketSnapshot}`;
   }
 
-  console.log('🎯 Building system prompt for plan length:', plan.length);
+    console.log(`🎯 System Prompt | Plan steps: ${plan.length} | Search results: ${finalSearchResults.length} chars | Model: ${actualModel}`);
 
   if (plan.length > 0) {
     // Если есть план - используем продвинутый промпт с планом
@@ -1003,14 +1016,14 @@ ${plan.map((step, idx) => `${idx + 1}. ${step.description}${step.searchQueries ?
               onChunk(content);
             }
           }
-        } catch (e) {
-          console.error('Error parsing SSE data:', e);
+        } catch (e: any) {
+          console.error(`❌ SSE Parse Error | Data length: ${data.length} | Error: ${e.message || e}`);
         }
       }
     }
   }
 
-  console.log('✅ Final answer completed, length:', fullResponse.length);
+  console.log(`✅ Final Answer Completed | Length: ${fullResponse.length} chars | Model: ${actualModel} | Plan used: ${plan.length > 0 ? 'yes' : 'no'}`);
   return fullResponse;
 };
 
@@ -1062,14 +1075,14 @@ const getSimpleResponse = async (query: string): Promise<string> => {
   return 'Привет! 👋 Я WindexsAI - ИИ-помощник для решения различных задач. Что именно вас интересует?';
 };
 
-// Функция для определения реальной модели OpenAI на основе выбранного режима
+// Функция для определения реальной модели DeepSeek на основе выбранного режима
 const getActualModel = (selectedModel: string): string => {
   switch (selectedModel) {
     case 'pro':
-      return 'gpt-5.1'; // GPT-5.1 для Pro режима
+      return 'deepseek-reasoner'; // DeepSeek Reasoner для Pro режима
     case 'lite':
     default:
-      return 'gpt-4o-mini'; // GPT-4o Mini для Lite режима
+      return 'deepseek-chat'; // DeepSeek Chat для Lite режима
   }
 };
 
@@ -1077,12 +1090,12 @@ const getActualModel = (selectedModel: string): string => {
 const getModelParams = (selectedModel: string) => {
   if (selectedModel === 'pro') {
     return {
-      max_tokens: 12000, // увеличенное ограничение для GPT-5.1 Pro режима
+      max_tokens: 12000, // увеличенное ограничение для DeepSeek Reasoner
       temperature: 0.7  // стандартная креативность
     };
   }
   return {
-    max_tokens: 12000, // увеличенное ограничение для GPT-5.1 Lite режима
+    max_tokens: 12000, // увеличенное ограничение для DeepSeek Chat
     temperature: 0.7  // стандартная креативность
   };
 };
@@ -1094,6 +1107,93 @@ export interface WebsiteArtifact {
   title: string;
   files: Record<string, string>;
   deps?: Record<string, string>;
+}
+
+// Функции для безопасного парсинга JSON из ответа модели
+function stripCodeFences(raw: string) {
+  return raw
+    .trim()
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/i, "")
+    .trim();
+}
+
+/** Находит первый полноценный JSON-объект по балансировке {} с учётом строк и экранирования */
+export function extractBalancedJsonObject(raw: string): string | null {
+  if (!raw) return null;
+
+  const s = stripCodeFences(raw);
+  const start = s.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+        continue;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === "{") {
+      depth++;
+      continue;
+    }
+
+    if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        return s.slice(start, i + 1);
+      }
+    }
+  }
+
+  // JSON обрезан/не завершён
+  return null;
+}
+
+export function safeParseArtifactResponse(raw: string) {
+  console.log("🔍 safeParseArtifactResponse called with raw length:", raw.length);
+
+  // 1) Сначала пробуем как есть (иногда content уже чистый JSON)
+  try {
+    return JSON.parse(stripCodeFences(raw));
+  } catch {
+    // ignore
+  }
+
+  // 2) Затем извлекаем сбалансированный объект
+  const jsonText = extractBalancedJsonObject(raw);
+  console.log("📝 extractBalancedJsonObject result length:", jsonText?.length ?? null);
+
+  if (!jsonText) {
+    throw new Error("Model output does not contain a complete JSON object (likely truncated).");
+  }
+
+  try {
+    return JSON.parse(jsonText);
+  } catch (e: any) {
+    throw new Error(`JSON parse failed: ${e?.message ?? e}`);
+  }
 }
 
 // Функция для определения intent на создание сайта
@@ -1240,27 +1340,35 @@ export const detectWebsiteIntent = (userMessage: string): boolean => {
   return websiteKeywords.some(keyword => lowerMessage.includes(keyword));
 };
 
-// Функция для генерации веб-артефакта через OpenAI
+// Функция для генерации веб-артефакта через DeepSeek
 export const generateWebsiteArtifact = async (
   userPrompt: string,
-  model: string = "gpt-4o"
+  model: string = "deepseek-chat"
 ): Promise<{ artifact: WebsiteArtifact; assistantText: string }> => {
   try {
-    console.log('🎨 Generating website artifact for prompt:', userPrompt);
+    console.log('🎨 STARTING website artifact generation for prompt:', userPrompt);
+    console.log('🔧 Using model:', model);
+
+    // Вызываем DeepSeek API для генерации сайта
+    console.log('🚀 Calling DeepSeek API for website generation');
 
     const systemPrompt = `Ты — эксперт-разработчик, создающий полноценные веб-проекты на React + TypeScript + Vite.
 
-ВАЖНО: Ты ДОЛЖЕН вернуть валидный JSON-объект следующей структуры:
+КРИТИЧНО ВАЖНО: Ты ДОЛЖЕН вернуть ТОЛЬКО чистый JSON без какого-либо markdown форматирования. Никаких \`\`\`json блоков, никаких объяснений, никакого дополнительного текста. Начинай ответ прямо с { и заканчивай }.
+
+Генерируй файлы БЕЗ папок в именах (просто main.tsx, App.tsx, index.css) - я сам расставлю правильные пути!
+
+Структура ответа должна быть такой:
 {
   "assistantText": "Краткое описание созданного сайта (2-3 предложения)",
   "artifact": {
     "title": "Название сайта",
     "files": {
-      "/index.html": "HTML код",
-      "/src/main.tsx": "React entry point",
-      "/src/App.tsx": "Главный компонент",
-      "/src/index.css": "Tailwind CSS стили",
-      "/src/components/Component1.tsx": "дополнительные компоненты",
+      "index.html": "HTML код с <script type=\"module\" src=\"/src/main.tsx\"></script>",
+      "main.tsx": "React entry point с импортами (import App from './App', import './index.css')",
+      "App.tsx": "Главный компонент React",
+      "index.css": "Tailwind CSS стили",
+      "Component1.tsx": "дополнительные компоненты (если нужны)",
       ...другие файлы
     },
     "deps": {
@@ -1281,6 +1389,10 @@ export const generateWebsiteArtifact = async (
 6. ОБЯЗАТЕЛЬНО разделяй код на компоненты в /src/components/
 7. Делай сайты ИНТЕРАКТИВНЫМИ и ФУНКЦИОНАЛЬНЫМИ, а не просто статичными
 8. В deps ОБЯЗАТЕЛЬНО включи: "tailwindcss": "^3.4.0"
+9. НЕ используй React/JSX внутри строк JSON - пиши обычный JavaScript
+10. Не более 4 файлов всего (index.html, main.tsx, App.tsx, styles.css)
+11. Общий объём всех файлов <= 20KB
+12. НЕ добавляй комментарии в код - только чистый код
 
 ДИЗАЙН-ТРЕБОВАНИЯ (ОБЯЗАТЕЛЬНО):
 - Используй современные градиенты (bg-gradient-to-br, from-blue-500 to-purple-600)
@@ -1383,7 +1495,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 ✅ Адаптивность для всех экранов
 ✅ Полезный UX с понятными действиями
 
-Отвечай ТОЛЬКО валидным JSON, без markdown форматирования, без комментариев.`;
+ПРИМЕР (ТОЛЬКО JSON):
+{"assistantText": "Создан сайт", "artifact": {"title": "Сайт", "files": {"/src/App.tsx": "export default function App() { return <div>Hello</div>; }"}, "deps": {}}}
+
+ОТВЕЧАЙ ТОЛЬКО JSON, БЕЗ МАРКДАУНА!`;
 
     const response = await fetch(`${API_BASE_URL}/chat`, {
       method: 'POST',
@@ -1395,32 +1510,43 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        model: model === 'lite' ? 'gpt-4o-mini' : 'gpt-4o',
+        model: model === 'lite' ? 'deepseek-chat' : 'deepseek-reasoner',
         stream: false,
+        // Включаем JSON mode если поддерживается
+        response_format: { type: "json_object" },
+        // Увеличиваем лимиты для генерации сайтов
+        max_tokens: 8000,
+        temperature: 0.2,
       }),
     });
 
     if (!response.ok) {
-      throw new Error(`OpenAI API error: ${response.status}`);
+      throw new Error(`DeepSeek API error: ${response.status}`);
     }
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content;
 
     if (!content) {
-      throw new Error('No content in OpenAI response');
+      throw new Error('No content in DeepSeek response');
     }
 
-    // Парсим JSON из ответа
+    // Парсим JSON из ответа DeepSeek
     let parsedData;
     try {
-      // Пытаемся извлечь JSON из markdown блока, если есть
-      const jsonMatch = content.match(/```json\s*([\s\S]*?)\s*```/);
-      const jsonString = jsonMatch ? jsonMatch[1] : content;
-      parsedData = JSON.parse(jsonString.trim());
-    } catch (parseError) {
-      console.error('Failed to parse JSON from OpenAI:', content);
-      throw new Error('Invalid JSON response from OpenAI');
+      parsedData = safeParseArtifactResponse(content);
+      console.log("✅ JSON parsing successful");
+    } catch (parseError: any) {
+      console.error("❌ Failed to parse JSON from DeepSeek. Content preview:", content.substring(0, 800) + "...");
+      console.error("❌ Parse error details:", parseError?.message ?? parseError);
+
+      // ВАЖНО: не делаем regex emergency, он ломает на JSX {}
+      // ВАЖНО: не делаем fallback artifact → это приводит к 400 на /artifacts
+
+      throw new Error(
+        "Website artifact generation failed: model returned invalid or truncated JSON. " +
+        "Try increasing max_tokens or generating a smaller artifact."
+      );
     }
 
     // Валидация структуры
@@ -1428,13 +1554,112 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       throw new Error('Invalid artifact structure');
     }
 
-    // Проверка обязательных файлов
-    const requiredFiles = ['/index.html', '/src/App.tsx', '/src/main.tsx'];
-    const missingFiles = requiredFiles.filter(file => !parsedData.artifact.files[file]);
-    
+    // Проверка обязательных файлов (проверяем как с путями, так и без)
+    const requiredFiles = ['index.html', 'App.tsx', 'main.tsx', 'index.css'];
+    const requiredFilesWithPaths = ['/index.html', '/src/App.tsx', '/src/main.tsx', '/src/index.css'];
+
+    // Создаем массив отсутствующих файлов
+    const missingFiles: string[] = [];
+    requiredFiles.forEach(file => {
+      const hasFile = parsedData.artifact.files[file] ||
+                      parsedData.artifact.files[`/src/${file}`] ||
+                      parsedData.artifact.files[`/${file}`];
+      if (!hasFile) {
+        missingFiles.push(file);
+      }
+    });
+
     if (missingFiles.length > 0) {
-      console.error('Missing required files:', missingFiles);
-      throw new Error(`Missing required files: ${missingFiles.join(', ')}`);
+      console.log('⚠️ Missing required files, will add defaults:', missingFiles);
+    }
+
+    // Исправляем структуру файлов для Vite (перемещаем файлы в правильные папки)
+    const correctedFiles: Record<string, string> = {};
+
+    // Проверяем, что parsedData имеет правильную структуру
+    if (!parsedData?.artifact?.files || typeof parsedData.artifact.files !== 'object') {
+      throw new Error('Invalid artifact structure: missing or invalid files');
+    }
+
+    // Сначала переносим существующие файлы в правильные папки
+    Object.entries(parsedData.artifact.files).forEach(([filePath, content]) => {
+      if (typeof filePath !== 'string' || typeof content !== 'string') {
+        console.warn(`Skipping invalid file entry: ${filePath}`);
+        return;
+      }
+
+      if (filePath === 'main.tsx' || filePath === 'main.jsx') {
+        correctedFiles['/src/main.tsx'] = content.replace(/from '\.\/App'/g, "from './App'");
+      } else if (filePath === 'App.tsx' || filePath === 'App.jsx') {
+        correctedFiles['/src/App.tsx'] = content;
+      } else if (filePath === 'index.css' || filePath === 'styles.css') {
+        correctedFiles['/src/index.css'] = content;
+      } else if (filePath === 'index.html') {
+        // Исправляем ссылку на main.tsx в index.html
+        const correctedContent = content.replace(
+          /src="[^"]*main\.[jt]sx?"/g,
+          'src="/src/main.tsx"'
+        );
+        correctedFiles['/index.html'] = correctedContent;
+      } else {
+        // Сохраняем остальные файлы как есть
+        correctedFiles[filePath.startsWith('/') ? filePath : `/${filePath}`] = content;
+      }
+    });
+
+    // Обновляем файлы в артефакте
+    parsedData.artifact.files = correctedFiles;
+
+    // Добавляем недостающие файлы с правильными путями
+    if (!parsedData.artifact.files['/index.html']) {
+      parsedData.artifact.files['/index.html'] = `<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${parsedData.artifact.title || 'Сайт'}</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>`;
+    }
+
+    if (!parsedData.artifact.files['/src/main.tsx']) {
+      parsedData.artifact.files['/src/main.tsx'] = `import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+import './index.css'
+
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+)`;
+    }
+
+    if (!parsedData.artifact.files['/src/App.tsx']) {
+      parsedData.artifact.files['/src/App.tsx'] = `export default function App() {
+  return (
+    <div className="min-h-screen bg-blue-50 flex items-center justify-center">
+      <div className="text-center">
+        <h1 className="text-4xl font-bold text-blue-600 mb-4">
+          Сайт создан!
+        </h1>
+        <p className="text-gray-600">
+          Добро пожаловать на новый сайт
+        </p>
+      </div>
+    </div>
+  )
+}`;
+    }
+
+    if (!parsedData.artifact.files['/src/index.css']) {
+      parsedData.artifact.files['/src/index.css'] = `@tailwind base;
+@tailwind components;
+@tailwind utilities;`;
     }
 
     console.log('✅ Website artifact generated successfully');
@@ -1459,22 +1684,23 @@ export const sendChatMessage = async (
   onSearchProgress?: (queries: string[]) => void,
   internetEnabled?: boolean,
   abortSignal?: AbortSignal,
-  onTokenCost?: (tokenCost: TokenCost) => void
+  onTokenCost?: (tokenCost: TokenCost) => void,
+  userId?: number,
+  sessionId?: number
 ): Promise<string> => {
-  console.log('🚀 sendChatMessage called with model:', selectedModel, 'message count:', messages.length, 'internetEnabled:', internetEnabled);
-  console.log('📜 Full messages array:', messages.map((msg, i) => `${i}: ${msg.role} - ${msg.content.substring(0, 50)}${msg.content.length > 50 ? '...' : ''}`));
-
   const userMessage = messages[messages.length - 1];
-  console.log('👤 User message:', userMessage?.content);
-  console.log('🔍 selectedModel check:', selectedModel, '=== "pro"?', selectedModel === 'pro');
+  const messageSummary = messages.map((msg, i) => `${i}:${msg.role}(${msg.content.length}ch)`).join(', ');
+  const actualModel = getActualModel(selectedModel);
+  console.log(`🚀 sendChatMessage | Selected: ${selectedModel} → DeepSeek: ${actualModel} | Messages: ${messages.length} | Internet: ${internetEnabled} | Last message: "${userMessage?.content?.substring(0, 80) || 'none'}..." | Summary: [${messageSummary}]`);
+
+  console.log(`🔍 Model Check | Selected: ${selectedModel} | DeepSeek: ${actualModel} | Advanced logic: ${selectedModel === 'pro' || (selectedModel === 'lite' && internetEnabled)}`);
 
   // СПЕЦИАЛЬНАЯ ЛОГИКА ДЛЯ ПРОДВИНУТЫХ МОДЕЛЕЙ (Pro или Lite с интернетом)
   if (selectedModel === 'pro' || (selectedModel === 'lite' && internetEnabled)) {
-    console.log('🎯 ADVANCED model logic activated for:', selectedModel, 'with internet:', internetEnabled);
+    console.log(`🎯 Advanced Logic | Selected: ${selectedModel} → DeepSeek: ${getActualModel(selectedModel)} | Internet: ${internetEnabled} | User query: "${userMessage?.content?.substring(0, 100) || 'none'}..."`);
     return handleAdvancedModelLogic(messages, userMessage, selectedModel, abortSignal, onChunk, onPlanGenerated, onStepStart, onSearchProgress, internetEnabled);
   }
-  // Конвертируем выбранную модель в реальную модель OpenAI
-  const actualModel = getActualModel(selectedModel);
+  // Получаем параметры для выбранной модели
   const modelParams = getModelParams(selectedModel);
 
   // Проверяем, является ли запрос очень простым
@@ -1592,14 +1818,18 @@ export const sendChatMessage = async (
 
       if (shouldGeneratePlan) {
         try {
-          console.log('Generating response plan for:', userMessage.content);
-        plan = await generateResponsePlan(userMessage.content, selectedModel);
-          console.log('Plan generated successfully:', plan.length, 'steps');
-        } catch (planError) {
-          console.error('Error generating response plan:', planError);
+          console.log(`📋 Generating response plan | Query: "${userMessage.content.substring(0, 100)}..." | Selected: ${selectedModel} → Will use DeepSeek Chat`);
+          plan = await generateResponsePlan(userMessage.content, selectedModel);
+          console.log(`✅ Plan generated successfully | Steps: ${plan.length}`);
+        } catch (planError: any) {
+          // Проверяем тип ошибки
+          if (planError.name === 'AbortError' || planError.message?.includes('aborted')) {
+            console.warn(`⚠️ Plan Generation Aborted | Continuing without plan | Error: ${planError.message || 'Request aborted'}`);
+          } else {
+            console.error(`❌ Plan Generation Failed | Continuing without plan | Error: ${planError.message || planError} | Type: ${planError.name || 'unknown'}`);
+          }
           // Продолжаем без плана, если генерация не удалась
           plan = [];
-          console.log('Continuing without plan due to generation error');
         }
       }
 
@@ -1659,9 +1889,9 @@ export const sendChatMessage = async (
             isVisualizationRequest: isVisualizationRequest
           });
           searchResults = await searchWeb(userMessage.content);
-          console.log('✅ Search completed, results length:', searchResults.length);
+          console.log(`✅ Web Search Completed | Results length: ${searchResults.length} chars | Query: "${userMessage.content.substring(0, 80)}..."`);
         } catch (searchError) {
-          console.error('❌ Error during web search:', searchError);
+          console.error(`❌ Web Search Error | Query: "${userMessage.content.substring(0, 80)}..." | Error: ${searchError}`);
           searchResults = '[SEARCH_ERROR]'; // Продолжаем без результатов поиска
         }
       } else {
@@ -1773,8 +2003,8 @@ ${planDescription}
           }
         ];
 
-        // GPT-5.1 не поддерживает streaming
-        const useStreaming = actualModel !== 'gpt-5.1';
+        // DeepSeek поддерживает streaming
+        const useStreaming = true;
 
         const response = await fetch(`${API_BASE_URL}/chat`, {
           method: 'POST',
@@ -1834,7 +2064,7 @@ ${planDescription}
           reader.releaseLock();
           }
         } else {
-          // Обрабатываем обычный JSON ответ для GPT-5.1
+          // Обрабатываем обычный JSON ответ (без streaming)
           const data = await response.json();
           const content = data.choices[0]?.message?.content || '';
           fullResponse = content;
@@ -1892,9 +2122,9 @@ ${planDescription}
             // Используем обычный веб-поиск для всех запросов, требующих поиска
             // Это обеспечивает правильную работу с криптовалютами и другими данными
             searchResults = await searchWeb(userMessage.content);
-            console.log('✅ Web search completed, results length:', searchResults.length);
+            console.log(`✅ Web Search Completed | Results length: ${searchResults.length} chars | Query: "${userMessage.content.substring(0, 80)}..."`);
           } catch (searchError) {
-            console.error('❌ Error during web search:', searchError);
+            console.error(`❌ Web Search Error | Query: "${userMessage.content.substring(0, 80)}..." | Error: ${searchError}`);
             searchResults = '[SEARCH_ERROR]';
           }
         } else {
@@ -1972,8 +2202,12 @@ ${planDescription}
           content: msg.content.substring(0, 100) + (msg.content.length > 100 ? '...' : '')
         })));
 
-        // GPT-5.1 не поддерживает streaming
-        const useStreaming = actualModel !== 'gpt-5.1';
+        // DeepSeek поддерживает streaming
+        const useStreaming = true;
+
+        // Получаем параметры для выбранной модели (нужно здесь, так как actualModel определена выше)
+        // ВАЖНО: modelParams должен существовать всегда — иначе при fallback/timeout планера будет ReferenceError
+        const modelParams = getModelParams(selectedModel) ?? { max_tokens: 4000, temperature: 0.7 };
 
         const response = await fetch(`${API_BASE_URL}/chat`, {
           method: 'POST',
@@ -1987,6 +2221,8 @@ ${planDescription}
             })),
             model: actualModel,
             stream: useStreaming,
+            userId: userId || 1,
+            sessionId: sessionId,
             ...modelParams,
           }),
           signal: abortSignal,
@@ -2046,7 +2282,7 @@ ${planDescription}
           reader.releaseLock();
         }
         } else {
-          // Обрабатываем обычный JSON ответ для GPT-5.1
+          // Обрабатываем обычный JSON ответ (без streaming)
           const data = await response.json();
           const content = data.choices[0]?.message?.content || '';
           fullResponse = content;
@@ -2063,8 +2299,8 @@ ${planDescription}
       }
     } else {
       // Обычный ответ без плана (для последующих сообщений)
-      // GPT-5.1 не поддерживает streaming
-      const useStreaming = actualModel !== 'gpt-5.1';
+      // Обработка для моделей без поддержки streaming
+      const useStreaming = true; // DeepSeek supports streaming
 
       const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
@@ -2140,25 +2376,39 @@ ${planDescription}
 
     return fullResponse;
   } catch (error) {
-    console.error('OpenAI API error:', error);
+    console.error('DeepSeek API error:', error);
     throw error;
   }
 };
 
 // Генерация плана ответа
 const generateResponsePlan = async (userQuestion: string, selectedModel: string): Promise<PlanStep[]> => {
-  console.log('🎯 generateResponsePlan called with question:', userQuestion.substring(0, 50) + '...', 'model:', selectedModel);
+  console.log(`📋 Plan Generation | Question: "${userQuestion}" (${userQuestion.length} chars) | Selected: ${selectedModel} → Will use DeepSeek Chat`);
+
+  // ✅ Ранний return для простых вопросов - избегаем 60s таймаут и лишний сетевой вызов
+  const q = userQuestion.trim().toLowerCase();
+  const simple =
+    userQuestion.trim().length <= 80 &&
+    !q.includes('план') &&
+    !q.includes('анализ') &&
+    !q.includes('сравн') &&
+    !q.includes('стратег');
+
+  if (simple) {
+    console.log('🟢 Plan Generation Skipped | Simple query detected, returning empty plan');
+    return [];
+  }
 
   // Проверяем доступность API
   if (!isApiAvailable()) {
-    console.log('❌ API not available, returning empty plan');
+    console.log('❌ Plan Generation Failed | API not available, returning empty plan');
     return []; // Возвращаем пустой план при недоступности API
   }
 
-  // Для генерации плана всегда используем gpt-4o-mini, так как она стабильнее
-  const actualModel = 'gpt-4o-mini';
-  const modelParams = { max_tokens: 4000, temperature: 0.3 };
-  console.log('🔧 Using model for plan generation:', actualModel, '(forced to gpt-4o-mini for stability)');
+  // Для генерации плана всегда используем deepseek-chat с консервативными параметрами
+  const actualModel = 'deepseek-chat';
+  const modelParams = { max_tokens: 1200, temperature: 0.2 };
+  console.log(`🔧 Plan Generation Config | Model: ${actualModel} | Max tokens: ${modelParams.max_tokens} | Temperature: ${modelParams.temperature} | Note: Conservative settings for planning accuracy`);
 
   const planPrompt = `
 СОЗДАЙ ПОДРОБНЫЙ ПЛАН С УКАЗАНИЕМ ПОИСКОВЫХ ЗАПРОСОВ ДЛЯ ИНТЕРНЕТА
@@ -2218,74 +2468,94 @@ const generateResponsePlan = async (userQuestion: string, selectedModel: string)
 ]
 `;
 
-  console.log('🎯 About to call generateResponsePlan API with model:', actualModel);
+  console.log(`🚀 Plan Generation Request | Model: ${actualModel} | Prompt length: ${planPrompt.length} chars | Stream: false`);
 
-  // GPT-5.1 не поддерживает streaming, но здесь мы и так используем stream: false
-  console.log('🔄 Making request to API for plan generation...');
-
-  // Создаем AbortController для таймаута
+  // Создаем AbortController для таймаута (увеличиваем до 60 секунд для надежности)
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 секунд таймаут
-
-  const response = await fetch(`${API_BASE_URL}/chat`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      messages: [
-        { role: 'system', content: 'Ты - помощник, который создает планы ответов. Всегда отвечай только в формате JSON.' },
-        { role: 'user', content: planPrompt }
-      ],
-      model: actualModel,
-      stream: false,
-    }),
-    signal: controller.signal,
-  });
-
-  clearTimeout(timeoutId);
-
-  console.log('📡 Plan generation API response status:', response.status);
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('❌ Plan generation API error:', response.status, response.statusText, errorText);
-    throw new Error(`Plan generation API error: ${response.status} ${response.statusText} - ${errorText}`);
-  }
-
-  const responseData = await response.json();
-  console.log('📦 Plan generation API response data received, length:', JSON.stringify(responseData).length);
-
-  // Обработка ответа в зависимости от используемого API
-  let planText;
-  if (actualModel === 'gpt-5.1') {
-    // Новый Responses API
-    planText = responseData.output_text || '[]';
-  } else {
-    // Старый Chat Completions API
-    planText = responseData.choices[0]?.message?.content || '[]';
-  }
+  const timeoutMs = 60000; // 60 секунд таймаут
+  const timeoutId = setTimeout(() => {
+    console.warn(`⏱️ Plan Generation Timeout | Model: ${actualModel} | Timeout: ${timeoutMs}ms exceeded`);
+    controller.abort();
+  }, timeoutMs);
 
   try {
+    const response = await fetch(`${API_BASE_URL}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: 'Ты - помощник, который создает планы ответов. Всегда отвечай только в формате JSON.' },
+          { role: 'user', content: planPrompt }
+        ],
+        model: actualModel,
+        stream: false,
+        max_tokens: modelParams.max_tokens,
+        temperature: modelParams.temperature,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ Plan Generation API Error | Status: ${response.status} ${response.statusText} | Model: ${actualModel} | Error: ${errorText.substring(0, 500)}`);
+      throw new Error(`Plan generation API error: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+
+    const responseData = await response.json();
+    const responseSize = JSON.stringify(responseData).length;
+    console.log(`📦 Plan Generation Response | Status: ${response.status} | Response size: ${responseSize} bytes | Has choices: ${!!responseData.choices}`);
+
+    // Обработка ответа от DeepSeek API
+    let planText = responseData.choices[0]?.message?.content || '[]';
+
+    try {
     // Очищаем текст от возможных обратных кавычек и лишних символов
     let cleanText = planText.trim();
 
+    console.log('🔧 Raw plan text:', cleanText.substring(0, 200) + '...');
+
     // Удаляем обратные кавычки если они есть
     if (cleanText.startsWith('```json')) {
-      cleanText = cleanText.replace(/```json\s*/, '').replace(/```\s*$/, '');
+      cleanText = cleanText.replace(/^```json\s*/, '').replace(/\s*```$/m, '');
+      console.log('📝 Removed ```json wrapper');
     } else if (cleanText.startsWith('```')) {
-      cleanText = cleanText.replace(/```\s*/, '').replace(/```\s*$/, '');
+      cleanText = cleanText.replace(/^```\s*/, '').replace(/\s*```$/m, '');
+      console.log('📝 Removed generic ``` wrapper');
     }
 
-    // Удаляем возможные текстовые префиксы
+    // Удаляем возможные текстовые префиксы и находим JSON
     if (cleanText.includes('[') && cleanText.includes(']')) {
       const startIndex = cleanText.indexOf('[');
       const endIndex = cleanText.lastIndexOf(']') + 1;
       cleanText = cleanText.substring(startIndex, endIndex);
+      console.log('✂️ Extracted JSON array from text');
     }
 
-    let plan = JSON.parse(cleanText);
+    console.log('🔧 Cleaned text:', cleanText.substring(0, 200) + '...');
+
+    // Пробуем JSON5 парсинг сначала
+    let plan;
+    try {
+      plan = JSON5.parse(cleanText);
+      console.log(`✅ Plan Parsed | Method: JSON5 | Steps: ${Array.isArray(plan) ? plan.length : 'not array'}`);
+    } catch (json5Error) {
+      console.log(`🔄 Plan Parsing | JSON5 failed: ${json5Error.message}, trying standard JSON`);
+      try {
+        plan = JSON.parse(cleanText);
+        console.log(`✅ Plan Parsed | Method: Standard JSON | Steps: ${Array.isArray(plan) ? plan.length : 'not array'}`);
+      } catch (jsonError) {
+        console.error(`❌ Plan Parsing Failed | JSON5: ${json5Error.message} | Standard JSON: ${jsonError.message} | Text length: ${cleanText.length}`);
+        console.error(`📄 Plan Text Preview: ${cleanText.substring(0, 500)}...`);
+        throw jsonError;
+      }
+    }
+
     if (!Array.isArray(plan)) {
+      console.log(`⚠️ Plan Validation | Parsed result is not an array (type: ${typeof plan}), converting to empty array`);
       plan = [];
     }
 
@@ -2293,50 +2563,71 @@ const generateResponsePlan = async (userQuestion: string, selectedModel: string)
     const maxSteps = 4; // Максимум 4 шага
     const maxQueriesPerStep = 2; // Максимум 2 запроса на шаг
 
+    const originalStepCount = plan.length;
     if (plan.length > maxSteps) {
-      console.log(`📏 Plan truncated from ${plan.length} to ${maxSteps} steps`);
+      console.log(`📏 Plan Truncation | Steps: ${originalStepCount} → ${maxSteps} (limit: ${maxSteps})`);
       plan = plan.slice(0, maxSteps);
     }
 
     // Ограничиваем количество запросов на каждом шаге
-    plan.forEach((step: any) => {
+    plan.forEach((step: any, index: number) => {
       if (step.searchQueries && step.searchQueries.length > maxQueriesPerStep) {
-        console.log(`📏 Step "${step.step}" queries truncated from ${step.searchQueries.length} to ${maxQueriesPerStep}`);
+        const originalQueryCount = step.searchQueries.length;
+        console.log(`📏 Step ${index + 1} Truncation | "${step.step || step.description || 'unnamed'}" queries: ${originalQueryCount} → ${maxQueriesPerStep} (limit: ${maxQueriesPerStep})`);
         step.searchQueries = step.searchQueries.slice(0, maxQueriesPerStep);
       }
     });
 
-    return plan;
-  } catch (error) {
-    console.error('Error parsing plan JSON:', error);
-    console.error('Original plan text:', planText);
+    const totalQueries = plan.reduce((sum: number, step: any) => sum + (step.searchQueries?.length || 0), 0);
+    console.log(`✅ Plan Generated | Steps: ${plan.length} | Total search queries: ${totalQueries}`);
 
-    // Для простых запросов возвращаем пустой план, чтобы использовать обычный ответ
-    const isSimpleQuery = userQuestion.length < 100 &&
-      !userQuestion.toLowerCase().includes('план') &&
-      !userQuestion.toLowerCase().includes('анализ') &&
-      !userQuestion.toLowerCase().includes('разработ') &&
-      !userQuestion.toLowerCase().includes('созда');
+      return plan;
+    } catch (parseError: any) {
+      // Ошибки парсинга JSON
+      console.error(`❌ Plan Parsing Error | Error: ${parseError.message || parseError} | Original plan text length: ${planText?.length || 0}`);
+      console.error(`📄 Original plan text preview: ${planText?.substring(0, 500) || 'none'}...`);
 
-    if (isSimpleQuery) {
-      return []; // Пустой план = обычный ответ без этапов
-    }
+      // Для простых запросов возвращаем пустой план, чтобы использовать обычный ответ
+      const isSimpleQuery = userQuestion.length < 100 &&
+        !userQuestion.toLowerCase().includes('план') &&
+        !userQuestion.toLowerCase().includes('анализ') &&
+        !userQuestion.toLowerCase().includes('разработ') &&
+        !userQuestion.toLowerCase().includes('созда');
 
-    // Возвращаем дефолтный план для сложных запросов (упрощенный для экономии)
-    return [
-      {
-        step: "Анализ и подготовка",
-        description: "Проанализировать вопрос и подготовить ответ на основе доступных данных",
-        completed: false,
-        searchQueries: [
-          {
-            query: userQuestion.substring(0, 100) + " 2025", // Ограничиваем длину запроса
-            priority: "high",
-            purpose: "Основные данные для ответа"
-          }
-        ]
+      if (isSimpleQuery) {
+        return []; // Пустой план = обычный ответ без этапов
       }
-    ];
+
+      // Возвращаем дефолтный план для сложных запросов (упрощенный для экономии)
+      return [
+        {
+          step: "Анализ и подготовка",
+          description: "Проанализировать вопрос и подготовить ответ на основе доступных данных",
+          completed: false,
+          searchQueries: [
+            {
+              query: userQuestion.substring(0, 100) + " 2025", // Ограничиваем длину запроса
+              priority: "high",
+              purpose: "Основные данные для ответа"
+            }
+          ]
+        }
+      ];
+    }
+  } catch (fetchError: any) {
+    // Очищаем таймаут при любой ошибке fetch
+    clearTimeout(timeoutId);
+    
+    // Проверяем, является ли это ошибкой прерывания
+    if (fetchError.name === 'AbortError' || fetchError.message?.includes('aborted') || fetchError.message?.includes('AbortError')) {
+      console.warn(`⚠️ Plan Generation Aborted | Model: ${actualModel} | Query: "${userQuestion.substring(0, 80)}..." | Reason: Request aborted (timeout >${timeoutMs}ms or cancelled) | This may happen if the request takes too long`);
+      // Возвращаем пустой план вместо выброса ошибки, чтобы продолжить работу без планирования
+      return [];
+    }
+    
+    // Для других ошибок показываем детали и пробрасываем дальше
+    console.error(`❌ Plan Generation Fetch Error | Model: ${actualModel} | Query: "${userQuestion.substring(0, 80)}..." | Error: ${fetchError.message || fetchError} | Type: ${fetchError.name || 'unknown'}`);
+    throw fetchError;
   }
 };
 
@@ -2346,7 +2637,7 @@ const executePlanStep = async (
   selectedModel: string,
   onChunk?: (chunk: string) => void
 ): Promise<string> => {
-  // Конвертируем выбранную модель в реальную модель OpenAI
+  // Конвертируем выбранную модель в реальную модель DeepSeek
   const actualModel = getActualModel(selectedModel);
   const modelParams = getModelParams(selectedModel);
 

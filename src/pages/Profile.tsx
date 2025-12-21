@@ -7,12 +7,13 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { ArrowLeft, User, Mail, Key, Crown, CreditCard, Calendar, Check, LogOut } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
+import { WalletDashboard } from "@/components/WalletDashboard";
 
 const Profile = () => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
 
-  // Состояние для модальных окон
+  // Состояние для модальных окон (оставлено для совместимости)
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showPaymentsHistoryModal, setShowPaymentsHistoryModal] = useState(false);
@@ -24,21 +25,51 @@ const Profile = () => {
     email: ""
   });
 
+  // Состояние для данных пользователя из UserService
+  const [userData, setUserData] = useState<any>(null);
+
   // Загружаем данные пользователя при монтировании компонента
   useEffect(() => {
-    if (user) {
-      setUserProfile({
-        name: user.name,
-        email: user.email
-      });
-    }
+    const loadUserData = async () => {
+      if (user) {
+        setUserProfile({
+          name: user.name,
+          email: user.email
+        });
+
+        try {
+          // Загружаем данные пользователя через API
+          const response = await fetch('/api/users/current', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: user.id,
+              name: user.name,
+              email: user.email
+            })
+          });
+
+          if (response.ok) {
+            const userInfo = await response.json();
+            setUserData(userInfo);
+            console.log('✅ Profile.tsx: User data loaded:', userInfo.id, userInfo.email, 'balance:', userInfo.balance);
+          } else {
+            console.error('Failed to load user data via API');
+          }
+        } catch (error) {
+          console.error('Failed to load user data:', error);
+        }
+      }
+    };
+
+    loadUserData();
   }, [user]);
 
   // Данные подписки
   const currentPlan = {
     name: "WindexsAI Lite",
     status: "Активна",
-    description: "Базовые функции и модель GPT-4o-mini",
+    description: "Базовые функции и модель DeepSeek Chat",
     price: "Бесплатно",
     nextBilling: null
   };
@@ -133,7 +164,7 @@ const Profile = () => {
           >
             <ArrowLeft className="h-4 w-4 sm:h-5 sm:w-5" />
           </Button>
-          <h1 className="text-lg sm:text-xl font-semibold text-foreground">Личный кабинет</h1>
+          <h1 className="text-lg sm:text-xl font-semibold text-foreground">Профиль и кошелек</h1>
         </div>
       </div>
 
@@ -182,45 +213,14 @@ const Profile = () => {
           </CardContent>
         </Card>
 
+        {/* Кошелек вместо подписки */}
         <Card className="border-border">
-          <CardHeader>
-            <CardTitle className="text-foreground flex items-center gap-2">
-              <Crown className="h-5 w-5 text-primary" />
-              Подписка
-            </CardTitle>
-            <CardDescription>Управление подпиской WindexsAI</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="p-4 bg-primary/10 rounded-lg border border-primary/20">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="font-semibold text-foreground">{currentPlan.name}</h3>
-                <span className="text-sm text-green-600 font-medium">{currentPlan.status}</span>
-              </div>
-              <p className="text-sm text-muted-foreground mb-2">
-                {currentPlan.description}
-              </p>
-              <div className="text-xs text-muted-foreground mb-4">
-                {currentPlan.price} • Следующий платеж: {currentPlan.nextBilling}
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleChangePlan}
-                >
-                  Изменить план
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleViewPayments}
-                >
-                  История платежей
-                </Button>
-              </div>
-            </div>
-          </CardContent>
+          <WalletDashboard
+            embedded={true}
+            userId={userData?.id}
+          />
         </Card>
+        {userData && console.log('💰 Profile.tsx: Passing userId to WalletDashboard:', userData.id, 'email:', userData.email, 'balance:', userData.balance)}
 
         <Card className="border-border">
           <CardHeader>
@@ -295,7 +295,7 @@ const Profile = () => {
                     <span className="text-sm text-green-600 dark:text-green-400 font-medium">Бесплатно</span>
                   </div>
                   <p className="text-sm text-muted-foreground mb-3">
-                    Базовые функции и модель GPT-4o-mini
+                    Базовые функции и модель DeepSeek Chat
                   </p>
                   <Button
                     size="sm"

@@ -124,7 +124,9 @@ class ApiClient {
 
   // Получить артефакт по ID
   async getArtifact(artifactId: number): Promise<Artifact> {
-    return this.request(`/artifacts/${artifactId}`);
+    const url = `/api/artifacts/${artifactId}`;
+    console.log("🔍 GET artifact URL:", url, "artifactId:", artifactId);
+    return this.request(url);
   }
 
   // Обновить артефакт
