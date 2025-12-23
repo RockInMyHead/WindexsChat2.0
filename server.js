@@ -120,7 +120,7 @@ app.use(cors({
     'https://www.ai.windexs.ru',
     'http://ai.windexs.ru',
     'http://www.ai.windexs.ru',
-    'http://localhost:8081',
+    'https://ai.windexs.ru',
     'http://127.0.0.1:8081'
   ],
   credentials: true,

@@ -62,7 +62,7 @@ npm run mcp
 
 ## 5. Открыть в браузере
 
-Перейдите на: http://localhost:5173
+Перейдите на: https://ai.windexs.ru
 
 ## 6. Протестировать артефакты
 
@@ -119,7 +119,7 @@ npm run mcp
 - [ ] OPENAI_API_KEY настроен в `.env`
 - [ ] Сервер запущен (`npm run server` или `npm run dev:full`)
 - [ ] Клиент запущен (`npm run dev` или `npm run dev:full`)
-- [ ] Браузер открыт на http://localhost:5173
+- [ ] Браузер открыт на https://ai.windexs.ru
 - [ ] Тестовый артефакт создан успешно
 
 ---

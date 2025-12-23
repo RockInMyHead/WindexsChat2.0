@@ -1372,7 +1372,7 @@ const ChatMessage = ({ message, selectedModel }: ChatMessageProps) => {
         console.log('⚠️ Стриминг не дал данных, пробуем обычный запрос');
         // Если стриминг не дал результатов, пробуем обычный запрос
         try {
-          const fallbackResponse = await fetch('http://localhost:1062/api/chat', {
+          const fallbackResponse = await fetch('https://ai.windexs.ru/api/chat', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
