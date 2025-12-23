@@ -1,6 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { Plus, Wifi, WifiOff, Wallet, DollarSign } from "lucide-react";
-import { SidebarTrigger } from "@/components/ui/sidebar";
+import { Plus, Wifi, WifiOff } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 interface ChatHeaderProps {
@@ -31,9 +30,8 @@ const ChatHeader = ({
 
   return (
     <header className="border-b border-border bg-background sticky top-0 z-10">
-      <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div className="w-full max-w-5xl mx-auto px-2 sm:px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <SidebarTrigger className="lg:hidden" />
           {/* Заголовок WindexsAI убран по запросу пользователя */}
         </div>
         <div className="flex items-center gap-2">
@@ -45,7 +43,6 @@ const ChatHeader = ({
             className="gap-2 bg-green-50 hover:bg-green-100 border-green-200"
             title="Перейти в кошелек"
           >
-            <DollarSign className="h-4 w-4 text-green-600" />
             {balanceLoading ? (
               <span className="hidden sm:inline">Загрузка...</span>
             ) : (
@@ -53,18 +50,6 @@ const ChatHeader = ({
                 {formatBalance(userBalance)}
               </span>
             )}
-          </Button>
-
-          {/* Кнопка кошелька */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => navigate('/profile')}
-            className="gap-2"
-            title="Перейти в личный кабинет"
-          >
-            <Wallet className="h-4 w-4" />
-            <span className="hidden sm:inline">Кошелек</span>
           </Button>
 
           <Button

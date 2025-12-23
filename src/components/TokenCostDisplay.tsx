@@ -11,7 +11,9 @@ export const TokenCostDisplay = ({ tokenCost }: TokenCostDisplayProps) => {
   if (!tokenCost) return null;
 
   const formatCost = (cost: number) => {
-    return cost < 0.01 ? '<$0.01' : `$${cost.toFixed(4)}`;
+    // Конвертируем USD в рубли для отображения (курс 85 рублей за доллар)
+    const rubCost = cost * 85;
+    return `${rubCost.toFixed(2)} ₽`;
   };
 
   return (

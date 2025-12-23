@@ -6,6 +6,7 @@ import { DatabaseService } from './src/lib/database.js';
 import { marketRouter } from './src/routes/market.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import Database from 'better-sqlite3';
 import JSON5 from 'json5';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -14,11 +15,33 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 1062;
 
+// Локальная БД для prepared statements
+const DB_PATH = path.join(process.cwd(), 'windexs_chat.db');
+const db = new Database(DB_PATH);
+const checkSessionOwnerStmt = db.prepare(`
+  SELECT 1 FROM chat_sessions WHERE id = ? AND user_id = ?
+`);
+
+// Middleware для проверки аутентификации
+function requireUser(req, res, next) {
+  const userId = Number(req.header("x-user-id"));
+  if (!Number.isFinite(userId) || userId <= 0) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  req.user = { id: userId };
+  next();
+}
+
 // Стоимость токенов за 1M токенов в долларах (DeepSeek models only)
 const getTokenPrices = (model) => {
+  // Фиксированная стоимость: 1 рубль за сообщение
+  // Конвертируем в USD (курс 85 рублей за доллар)
+  const fixedCostUSD = 1 / 85; // 1 рубль = 1/85 USD
+
+  // Распределяем стоимость между input и output (примерно 30% на input, 70% на output)
   const prices = {
-    'deepseek-chat': { input: 0.07, output: 1.10 },
-    'deepseek-reasoner': { input: 0.55, output: 2.19 }
+    'deepseek-chat': { input: fixedCostUSD * 0.3, output: fixedCostUSD * 0.7 },
+    'deepseek-reasoner': { input: fixedCostUSD * 0.3, output: fixedCostUSD * 0.7 }
   };
   return prices[model] || prices['deepseek-chat'];
 };
@@ -92,10 +115,17 @@ const proxyAgent = PROXY_URL ? new ProxyAgent({
 
 // Middleware
 app.use(cors({
-  origin: ['https://ai.windexs.ru', 'https://www.ai.windexs.ru', 'http://ai.windexs.ru', 'http://www.ai.windexs.ru'],
+  origin: [
+    'https://ai.windexs.ru',
+    'https://www.ai.windexs.ru',
+    'http://ai.windexs.ru',
+    'http://www.ai.windexs.ru',
+    'http://localhost:8081',
+    'http://127.0.0.1:8081'
+  ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
 }));
 // Увеличиваем лимит размера тела запроса до 10MB для больших контекстов
 app.use(express.json({ limit: '10mb' }));
@@ -106,12 +136,12 @@ app.use('/api/market', marketRouter);
 // API Routes
 
 // Создать новую сессию чата
-app.post('/api/sessions', (req, res) => {
+app.post('/api/sessions', requireUser, (req, res) => {
   try {
     const { title = 'Новый чат' } = req.body;
-    console.log(`📝 POST /api/sessions | Title: "${title}" | Origin: ${req.headers.origin || 'none'}`);
-    const sessionId = DatabaseService.createSession(title);
-    console.log(`✅ Session created | ID: ${sessionId} | Title: "${title}"`);
+    console.log(`📝 POST /api/sessions | User: ${req.user.id} | Title: "${title}" | Origin: ${req.headers.origin || 'none'}`);
+    const sessionId = DatabaseService.createSession(title, req.user.id);
+    console.log(`✅ Session created | ID: ${sessionId} | User: ${req.user.id} | Title: "${title}"`);
     res.json({ sessionId });
   } catch (error) {
     console.error('Error creating session:', error);
@@ -120,10 +150,10 @@ app.post('/api/sessions', (req, res) => {
 });
 
 // Получить все сессии
-app.get('/api/sessions', (req, res) => {
+app.get('/api/sessions', requireUser, (req, res) => {
   try {
-    const sessions = DatabaseService.getAllSessions();
-    console.log(`📋 GET /api/sessions | Origin: ${req.headers.origin || 'none'} | Returning ${sessions.length} session(s)`);
+    const sessions = DatabaseService.getAllSessions(req.user.id);
+    console.log(`📋 GET /api/sessions | User: ${req.user.id} | Origin: ${req.headers.origin || 'none'} | Returning ${sessions.length} session(s)`);
     res.json(sessions);
   } catch (error) {
     console.error('Error getting sessions:', error);
@@ -132,10 +162,23 @@ app.get('/api/sessions', (req, res) => {
 });
 
 // Получить сообщения сессии
-app.get('/api/sessions/:sessionId/messages', (req, res) => {
+app.get('/api/sessions/:sessionId/messages', requireUser, (req, res) => {
   try {
     const { sessionId } = req.params;
-    const messages = DatabaseService.loadMessages(parseInt(sessionId));
+    const sessionIdNum = parseInt(sessionId);
+
+    console.log(`📨 GET /api/sessions/${sessionId}/messages | User: ${req.user.id} | Session: ${sessionIdNum}`);
+
+    // Проверяем, что сессия принадлежит пользователю
+    const ok = checkSessionOwnerStmt.get(sessionIdNum, req.user.id);
+    console.log(`🔍 Session ownership check: ${ok ? 'OK' : 'FAILED'} for user ${req.user.id} session ${sessionIdNum}`);
+
+    if (!ok) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+
+    const messages = DatabaseService.loadMessages(sessionIdNum);
+    console.log(`✅ Loaded ${messages.length} messages`);
     res.json(messages);
   } catch (error) {
     console.error('Error getting messages:', error);
@@ -144,7 +187,7 @@ app.get('/api/sessions/:sessionId/messages', (req, res) => {
 });
 
 // Сохранить сообщение
-app.post('/api/messages', (req, res) => {
+app.post('/api/messages', requireUser, (req, res) => {
   try {
     const { sessionId, role, content, artifactId } = req.body;
 
@@ -152,9 +195,12 @@ app.post('/api/messages', (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const messageId = DatabaseService.saveMessage(sessionId, role, content, artifactId || null);
+    const messageId = DatabaseService.saveMessage(sessionId, req.user.id, role, content, artifactId || null);
     res.json({ messageId });
   } catch (error) {
+    if (error?.code === "SESSION_NOT_FOUND") {
+      return res.status(404).json({ error: "Session not found" });
+    }
     console.error('Error saving message:', error);
     res.status(500).json({ error: 'Failed to save message' });
   }
@@ -275,42 +321,58 @@ app.post('/api/users/current', (req, res) => {
   try {
     const { id, name, email } = req.body;
 
-    if (!id || !email) {
-      return res.status(400).json({ error: 'User ID and email are required' });
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
     }
 
-    console.log('👤 Getting/creating user:', id, email);
+    console.log('👤 Getting/creating user:', name, email);
 
-    // Проверяем, существует ли уже пользователь по email
+    // Сначала пытаемся найти существующего пользователя по email
     let user = DatabaseService.getUserByEmail(email);
 
-    if (!user) {
+    if (user) {
+      console.log('✅ Existing user found:', user.id, user.email);
+    } else {
       // Создаем нового пользователя
-      console.log('📝 Creating new user:', email);
       const initialBalance = 10.0; // $10 для новых пользователей
-      const userId = DatabaseService.createUser(name || email, email, initialBalance);
+      const username = name || email;
 
-      if (userId) {
-        DatabaseService.createTransaction(
-          userId,
-          'deposit',
-          initialBalance,
-          'Welcome bonus',
-          'user_registration'
-        );
+      // Генерируем гарантированно уникальный email если нужно
+      let uniqueEmail = email;
+      let counter = 0;
+      const baseEmail = email.split('@')[0];
+      const domain = email.split('@')[1];
+
+      while (DatabaseService.getUserByEmail(uniqueEmail)) {
+        counter++;
+        uniqueEmail = `${baseEmail}_${counter}@${domain}`;
+      }
+
+      const userId = DatabaseService.createUser(username, uniqueEmail, initialBalance);
+      console.log('✅ New user created with ID:', userId, 'email:', uniqueEmail);
+
+      if (!userId) {
+        console.error('❌ Failed to create user - no ID returned');
+        return res.status(500).json({ error: 'Failed to create user' });
       }
 
       user = DatabaseService.getUserById(userId);
-      console.log('✅ New user created with ID:', userId);
-    } else {
-      console.log('✅ Existing user found:', user.id);
+      if (!user) {
+        console.error('❌ Failed to retrieve created user');
+        return res.status(500).json({ error: 'Failed to retrieve user' });
+      }
+
+      console.log('✅ New user retrieved:', user.id, user.email);
     }
 
-    if (!user) {
-      return res.status(500).json({ error: 'Failed to get or create user' });
-    }
+    // Всегда возвращаем пользователя с оригинальным email (не unique)
+    const responseUser = {
+      ...user,
+      email: email // оригинальный email
+    };
 
-    res.json(user);
+    console.log('✅ User response prepared:', responseUser.id, responseUser.email);
+    res.json(responseUser);
   } catch (error) {
     console.error('Get current user error:', error);
     res.status(500).json({ error: 'Failed to get current user' });
@@ -1296,7 +1358,7 @@ app.post('/api/chat', async (req, res) => {
 
     if (stream) {
       // Для потоковых ответов обрабатываем поток для получения информации о токенах
-      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
 
@@ -1371,7 +1433,11 @@ app.post('/api/chat', async (req, res) => {
             );
 
             // Списываем средства с баланса пользователя
+            console.log("💳 Deduct attempt:", { actualUserId, totalCost, sessionId });
             DatabaseService.updateUserBalance(actualUserId, -totalCost);
+
+            const userAfter = DatabaseService.getUserById(actualUserId);
+            console.log("✅ Balance after deduct:", userAfter?.balance);
             
             // Создаем транзакцию
             const lastUserMsg = messages.filter(m => m.role === 'user').pop();
@@ -1475,6 +1541,74 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// GET /api/users/:id/balance
+app.get("/api/users/:id/balance", (req, res) => {
+  try {
+    const userId = Number(req.params.id);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ error: "Invalid user id" });
+    }
+
+    const user = DatabaseService.getUserById(userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    return res.json({ balance: Number(user.balance) });
+  } catch (e) {
+    console.error("GET /api/users/:id/balance failed:", e);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// POST /api/users/:id/deduct-tokens (списываем USD totalCost)
+app.post("/api/users/:id/deduct-tokens", (req, res) => {
+  try {
+    const userId = Number(req.params.id);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ error: "Invalid user id" });
+    }
+
+    const { totalCost, model, inputTokens, outputTokens, totalTokens } = req.body || {};
+    const cost = Number(totalCost);
+
+    // totalCost должен быть числом > 0
+    if (!Number.isFinite(cost) || cost <= 0) {
+      return res.status(400).json({ error: "Invalid totalCost" });
+    }
+
+    // Рекомендуемая нормализация из-за REAL/float: храним до 6 знаков
+    const round6 = (x) => Math.round(x * 1e6) / 1e6;
+
+    const user = DatabaseService.getUserById(userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const current = Number(user.balance ?? 0);
+    const next = round6(current - cost);
+
+    if (next < 0) {
+      return res.status(402).json({ error: "Insufficient balance", balance: current });
+    }
+
+    // Списываем средства
+    DatabaseService.updateUserBalance(userId, -cost);
+
+    // Создаем транзакцию для аудита
+    DatabaseService.createTransaction(
+      userId,
+      'spend',
+      cost,
+      `AI usage: ${model || 'unknown'} (${totalTokens || 0} tokens)`,
+      null
+    );
+
+    const updatedUser = DatabaseService.getUserById(userId);
+
+    return res.json({ success: true, newBalance: Number(updatedUser.balance) });
+  } catch (e) {
+    console.error("POST /api/users/:id/deduct-tokens failed:", e);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // Test endpoint for context checking
 app.post('/api/test-context', (req, res) => {
   const { messages } = req.body;
@@ -1539,9 +1673,10 @@ app.use((req, res, next) => {
 });
 
 // Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on https://ai.windexs.ru`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running on http://localhost:${PORT} (accessible from all interfaces)`);
   console.log(`📦 Serving static files from dist/`);
+  console.log(`🌐 Public access via ngrok tunnel`);
 });
 
 // Graceful shutdown

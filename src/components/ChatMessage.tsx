@@ -1,5 +1,6 @@
 import React, { useMemo, useState, useRef } from "react";
 import { InlineMath, BlockMath } from 'react-katex';
+import { Copy, Volume2 } from "lucide-react";
 import DataVisualization, { parseVisualizationConfig, VisualizationConfig } from "./DataVisualization";
 
 // Функция выполнения JavaScript кода в изолированном контексте
@@ -9,15 +10,15 @@ const executeJavaScript = async (code: string): Promise<string> => {
       // Создаем изолированный контекст для выполнения кода
       const sandbox = {
         console: {
-          log: (...args: any[]) => {
+          log: (...args: unknown[]) => {
             return args.map(arg =>
               typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
             ).join(' ');
           },
-          error: (...args: any[]) => {
+          error: (...args: unknown[]) => {
             return `Error: ${args.map(arg => String(arg)).join(' ')}`;
           },
-          warn: (...args: any[]) => {
+          warn: (...args: unknown[]) => {
             return `Warning: ${args.map(arg => String(arg)).join(' ')}`;
           }
         },
@@ -83,12 +84,12 @@ const executeJavaScript = async (code: string): Promise<string> => {
 };
 
 // Функция выполнения Python кода через Pyodide
-let pyodideInstance: any = null;
+let pyodideInstance: unknown = null;
 let pyodideLoading = false;
 
 const loadPyodideScript = () => {
   return new Promise<void>((resolve, reject) => {
-    if ((window as any).loadPyodide) {
+    if ((window as { loadPyodide?: unknown }).loadPyodide) {
       resolve();
       return;
     }
@@ -118,7 +119,7 @@ const initializePyodide = async () => {
     await loadPyodideScript();
 
     // Загружаем Pyodide
-    pyodideInstance = await (window as any).loadPyodide({
+    pyodideInstance = await ((window as { loadPyodide?: unknown }).loadPyodide as (config: { indexURL: string }) => Promise<unknown>)({
       indexURL: "https://cdn.jsdelivr.net/pyodide/v0.24.1/full/"
     });
 
@@ -191,7 +192,7 @@ const executePython = async (code: string): Promise<string> => {
       }
 
       return finalOutput || 'Код выполнен успешно (без вывода)';
-    } catch (firstError: any) {
+    } catch (firstError: unknown) {
       // Проверяем, является ли ошибка отсутствием модуля
       const errorMessage = firstError.message || String(firstError);
       console.log('Python execution error:', errorMessage);
@@ -426,13 +427,13 @@ const formatCodeForPro = (text: string): string => {
     { regex: /(\{[\s\S]*?\}|\[[\s\S]*?\])/g, language: 'json' }
   ];
 
-  let formattedText = text;
+  const formattedText = text;
 
   // Ищем потенциальные блоки кода (отступы, специальные символы)
   const lines = text.split('\n');
   let inCodeBlock = false;
   let codeBlock = [];
-  let result = [];
+  const result: string[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -537,7 +538,11 @@ const parseTextWithCodeBlocks = (text: string, selectedModel?: string) => {
 };
 
 // Функция для парсинга Markdown с красивыми символами
-const parseMarkdown = (text: string): React.ReactNode[] => {
+const parseMarkdown = (
+  text: string,
+  onWordClick?: (word: string, event: React.MouseEvent, context: string) => void,
+  context?: string
+): React.ReactNode[] => {
   // Разбиваем текст на строки для обработки заголовков и списков
   const lines = text.split('\n');
   const result: React.ReactNode[] = [];
@@ -553,7 +558,7 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
           {currentList.map((item, idx) => (
             <li key={idx} className="flex items-start gap-2">
               <span className="text-primary mt-1.5 flex-shrink-0">▸</span>
-              <span className="flex-1">{renderInlineMarkdown(item.trim())}</span>
+              <span className="flex-1">{renderInlineMarkdown(item.trim(), 0, onWordClick, context)}</span>
             </li>
           ))}
         </ul>
@@ -584,7 +589,7 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
                     <tr className="bg-muted/50">
                       {headers.map((header, idx) => (
                         <th key={idx} className="border border-border px-4 py-2 text-left font-semibold">
-                          {renderInlineMarkdown(header.trim())}
+                          {renderInlineMarkdown(header.trim(), 0, onWordClick, context)}
                         </th>
                       ))}
                     </tr>
@@ -594,7 +599,7 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
                       <tr key={rowIdx} className="hover:bg-muted/30">
                         {row.map((cell, cellIdx) => (
                           <td key={cellIdx} className="border border-border px-4 py-2">
-                            {renderInlineMarkdown(cell.trim())}
+                            {renderInlineMarkdown(cell.trim(), 0, onWordClick, context)}
                           </td>
                         ))}
                       </tr>
@@ -608,7 +613,7 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
             currentTable.forEach((tableLine, idx) => {
               result.push(
                 <p key={`table-text-${result.length}-${idx}`} className="my-1">
-                  {renderInlineMarkdown(tableLine)}
+                  {renderInlineMarkdown(tableLine, 0, onWordClick, context)}
                 </p>
               );
             });
@@ -669,7 +674,7 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
       result.push(
         <h4 key={`h4-${lineIndex}`} className="text-lg font-bold mt-4 mb-2 text-foreground flex items-center gap-2">
           <span className="text-primary">▸</span>
-          <span>{renderInlineMarkdown(title)}</span>
+          <span>{renderInlineMarkdown(title, 0, onWordClick, context)}</span>
         </h4>
       );
       return;
@@ -683,7 +688,7 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
       result.push(
         <h3 key={`h3-${lineIndex}`} className="text-xl font-bold mt-5 mb-3 text-foreground flex items-center gap-2">
           <span className="text-primary">◆</span>
-          <span>{renderInlineMarkdown(title)}</span>
+          <span>{renderInlineMarkdown(title, 0, onWordClick, context)}</span>
         </h3>
       );
       return;
@@ -697,7 +702,7 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
       result.push(
         <h2 key={`h2-${lineIndex}`} className="text-2xl font-bold mt-6 mb-4 text-foreground flex items-center gap-2 border-b border-border pb-2">
           <span className="text-primary">✦</span>
-          <span>{renderInlineMarkdown(title)}</span>
+          <span>{renderInlineMarkdown(title, 0, onWordClick, context)}</span>
         </h2>
       );
       return;
@@ -711,7 +716,7 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
       result.push(
         <h1 key={`h1-${lineIndex}`} className="text-3xl font-bold mt-6 mb-4 text-foreground flex items-center gap-3 border-b-2 border-primary pb-3">
           <span className="text-primary text-2xl">★</span>
-          <span>{renderInlineMarkdown(title)}</span>
+          <span>{renderInlineMarkdown(title, 0, onWordClick, context)}</span>
         </h1>
       );
       return;
@@ -737,7 +742,7 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
       result.push(
         <div key={`num-${lineIndex}`} className="flex items-start gap-2 my-1.5">
           <span className="text-primary font-bold flex-shrink-0 w-6">{number}.</span>
-          <span className="flex-1">{renderInlineMarkdown(item)}</span>
+          <span className="flex-1">{renderInlineMarkdown(item, 0, onWordClick, context)}</span>
         </div>
       );
       return;
@@ -759,7 +764,7 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
     flushList();
     result.push(
       <p key={`p-${lineIndex}`} className="my-2 leading-relaxed">
-        {renderInlineMarkdown(trimmedLine)}
+        {renderInlineMarkdown(trimmedLine, 0, onWordClick, context)}
       </p>
     );
   });
@@ -769,8 +774,69 @@ const parseMarkdown = (text: string): React.ReactNode[] => {
   return result;
 };
 
+// Функция для рендеринга кликабельного текста
+const renderClickableText = (
+  text: string,
+  key: string | number,
+  onWordClick?: (word: string, event: React.MouseEvent, context: string) => void,
+  context?: string
+): React.ReactNode => {
+  if (!onWordClick || !context) {
+    return <span key={key}>{text}</span>;
+  }
+
+  // Разбиваем текст на логические единицы (слова, словосочетания и знаки препинания)
+  const segments = text.split(/(\s+|[.,!?;:—–\-()"«»[\]]|\n)/).filter(segment => segment.length > 0);
+
+  const nodes: React.ReactNode[] = [];
+  let segmentKey = 0;
+
+  segments.forEach((segment) => {
+    const trimmed = segment.trim();
+
+    // Проверяем, является ли сегмент словом (буквы, цифры, дефисы)
+    const isWordLike = /^[а-яА-Яa-zA-ZёЁ0-9]+(-[а-яА-Яa-zA-ZёЁ0-9]+)*$/.test(trimmed);
+
+    // Пропускаем очень короткие слова (менее 2 символов) и стоп-слова
+    const stopWords = ['и', 'в', 'на', 'с', 'по', 'за', 'из', 'от', 'к', 'до', 'для', 'при', 'о', 'об', 'а', 'но', 'да', 'или', 'либо', 'то', 'что', 'как', 'так', 'уже', 'еще', 'бы', 'же'];
+    const isStopWord = stopWords.includes(trimmed.toLowerCase());
+    const isTooShort = trimmed.length < 2;
+
+    if (isWordLike && !isStopWord && !isTooShort) {
+      // Кликабельное слово
+      nodes.push(
+        <span
+          key={`${key}-segment-${segmentKey++}`}
+          className="cursor-pointer hover:bg-primary/20 hover:text-primary transition-colors px-0.5 rounded select-none"
+          onClick={(e) => {
+            e.stopPropagation(); // Предотвращаем всплытие события
+            onWordClick(trimmed, e, context);
+          }}
+          title={`Нажмите для описания слова "${trimmed}"`}
+        >
+          {segment}
+        </span>
+      );
+    } else {
+      // Обычный текст (пробелы, знаки препинания, стоп-слова)
+      nodes.push(
+        <span key={`${key}-segment-${segmentKey++}`}>
+          {segment}
+        </span>
+      );
+    }
+  });
+
+  return <span key={key}>{nodes}</span>;
+};
+
 // Функция для рендеринга inline Markdown (жирный, курсив, код)
-const renderInlineMarkdown = (text: string, depth: number = 0): React.ReactNode => {
+const renderInlineMarkdown = (
+  text: string,
+  depth: number = 0,
+  onWordClick?: (word: string, event: React.MouseEvent, context: string) => void,
+  context?: string
+): React.ReactNode => {
   if (!text) return null;
   // Предотвращаем бесконечную рекурсию
   if (depth > 5) return text;
@@ -848,13 +914,13 @@ const renderInlineMarkdown = (text: string, depth: number = 0): React.ReactNode 
       return;
     }
 
-    // Добавляем текст до текущей части
-    if (part.start > lastIndex) {
-      const textBefore = text.substring(lastIndex, part.start);
-      if (textBefore) {
-        nodes.push(<span key={`text-${nodeKey++}`}>{textBefore}</span>);
-      }
+  // Добавляем текст до текущей части
+  if (part.start > lastIndex) {
+    const textBefore = text.substring(lastIndex, part.start);
+    if (textBefore) {
+      nodes.push(renderClickableText(textBefore, `text-${nodeKey++}`, onWordClick, context));
     }
+  }
 
     // Добавляем саму часть
     if (part.type === 'code') {
@@ -867,10 +933,10 @@ const renderInlineMarkdown = (text: string, depth: number = 0): React.ReactNode 
         </code>
       );
     } else if (part.type === 'bold') {
-      // Жирный текст обрабатываем рекурсивно (только для вложенных элементов, не для дубликатов)
-      const boldContent = part.content.includes('**') || part.content.includes('__') 
-        ? renderInlineMarkdown(part.content, depth + 1)
-        : part.content;
+    // Жирный текст обрабатываем рекурсивно (только для вложенных элементов, не для дубликатов)
+    const boldContent = part.content.includes('**') || part.content.includes('__')
+      ? renderInlineMarkdown(part.content, depth + 1, onWordClick, context)
+      : part.content;
       nodes.push(
         <strong key={`bold-${nodeKey++}`} className="font-bold text-foreground">
           {boldContent}
@@ -885,12 +951,12 @@ const renderInlineMarkdown = (text: string, depth: number = 0): React.ReactNode 
   if (lastIndex < text.length) {
     const textAfter = text.substring(lastIndex);
     if (textAfter) {
-      nodes.push(<span key={`text-${nodeKey++}`}>{textAfter}</span>);
+      nodes.push(renderClickableText(textAfter, `text-${nodeKey++}`, onWordClick, context));
     }
   }
 
-  // Если не было специальных частей, возвращаем просто текст
-  return nodes.length > 0 ? <>{nodes}</> : text;
+  // Если не было специальных частей, возвращаем кликабельный текст
+  return nodes.length > 0 ? <>{nodes}</> : renderClickableText(text, `text-${nodeKey}`, onWordClick, context);
 };
 
 // Функция для рендеринга математических выражений в тексте
@@ -903,7 +969,7 @@ const renderMathInText = (text: string): React.ReactNode => {
 
   // Регулярные выражения для поиска математических выражений
   // \[ ... \] для блочных выражений
-  const blockMathRegex = /\\\[([\s\S]*?)\\\]/g;
+  const blockMathRegex = /\[([\s\S]*?)\]/g;
   // \( ... \) для inline выражений
   const inlineMathRegex = /\\\((.*?)\\\)/g;
 
@@ -1023,8 +1089,158 @@ const renderMathInReactNodes = (nodes: React.ReactNode): React.ReactNode => {
   return processNode(nodes);
 };
 
+// Функция для простого рендеринга markdown в tooltip'е
+const renderTooltipMarkdown = (text: string): React.ReactNode => {
+  if (!text || text === 'Загрузка...') return text;
+
+  const nodes: React.ReactNode[] = [];
+  let nodeKey = 0;
+  let lastIndex = 0;
+
+  // Регулярные выражения для основных markdown элементов
+  const patterns = [
+    // Жирный текст **text** или __text__
+    { regex: /(\*\*|__)(.*?)\1/g, render: (match: string, content: string) =>
+      <strong key={`bold-${nodeKey++}`} className="font-bold text-foreground">{content}</strong>
+    },
+    // Курсив *text* или _text_
+    { regex: /(\*|_)(.*?)\1/g, render: (match: string, content: string) =>
+      <em key={`italic-${nodeKey++}`} className="italic text-foreground">{content}</em>
+    },
+    // Код `text`
+    { regex: /`([^`]+)`/g, render: (match: string, content: string) =>
+      <code key={`code-${nodeKey++}`} className="bg-muted px-1 py-0.5 rounded text-xs font-mono">{content}</code>
+    },
+    // Кавычки «text»
+    { regex: /«([^»]+)»/g, render: (match: string, content: string) =>
+      <span key={`quote-${nodeKey++}`}>"{content}"</span>
+    }
+  ];
+
+  // Собираем все совпадения
+  const matches: Array<{
+    start: number;
+    end: number;
+    render: (match: string, content: string) => React.ReactNode;
+    match: string;
+    content: string;
+  }> = [];
+
+  patterns.forEach(({ regex, render }) => {
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      matches.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        render,
+        match: match[0],
+        content: match[2] || match[1]
+      });
+    }
+  });
+
+  // Сортируем по позиции
+  matches.sort((a, b) => a.start - b.start);
+
+  // Удаляем пересекающиеся совпадения (приоритет: жирный > курсив > код)
+  const filteredMatches = matches.filter((match, index) => {
+    return !matches.some((other, otherIndex) =>
+      otherIndex !== index &&
+      match.start < other.end &&
+      match.end > other.start &&
+      other !== match
+    );
+  });
+
+  // Строим результат
+  filteredMatches.forEach((match) => {
+    // Добавляем текст до совпадения
+    if (match.start > lastIndex) {
+      const textBefore = text.substring(lastIndex, match.start);
+      if (textBefore.trim()) {
+        nodes.push(<span key={`text-${nodeKey++}`}>{textBefore}</span>);
+      }
+    }
+
+    // Добавляем отрендеренный элемент
+    nodes.push(match.render(match.match, match.content));
+    lastIndex = match.end;
+  });
+
+  // Добавляем оставшийся текст
+  if (lastIndex < text.length) {
+    const textAfter = text.substring(lastIndex);
+    if (textAfter.trim()) {
+      nodes.push(<span key={`text-${nodeKey++}`}>{textAfter}</span>);
+    }
+  }
+
+  return nodes.length > 0 ? <>{nodes}</> : text;
+};
+
+// Компонент для всплывающего окна с описанием слова
+const WordTooltip = ({
+  word,
+  description,
+  position,
+  onClose
+}: {
+  word: string;
+  description: string;
+  position: { x: number; y: number };
+  onClose: () => void;
+}) => {
+  const [isHovered, setIsHovered] = React.useState(false);
+
+  // Убрано автозакрытие - tooltip закрывается только по кнопке ✕
+
+  return (
+    <div
+      className="fixed z-50 bg-background border border-border rounded-lg shadow-lg p-3 max-w-xs"
+      style={{
+        left: position.x,
+        top: position.y,
+        transform: 'translate(-50%, -100%)',
+      }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <span className="font-semibold text-primary text-sm">"{word}"</span>
+        <button
+          onClick={onClose}
+          className="text-muted-foreground hover:text-foreground ml-2 text-xs"
+          title="Закрыть"
+        >
+          ✕
+        </button>
+      </div>
+      <div className="text-sm text-muted-foreground leading-relaxed">
+        {description === 'Загрузка...' ? (
+          <span className="flex items-center gap-2">
+            <div className="animate-spin rounded-full h-3 w-3 border border-primary border-t-transparent" />
+            {description}
+          </span>
+        ) : (
+          renderTooltipMarkdown(description)
+        )}
+      </div>
+    </div>
+  );
+};
+
 // Компонент для рендеринга текста с блоками кода, Markdown и математическими формулами
-const TextWithCodeBlocks = ({ text, selectedModel }: { text: string; selectedModel?: string }) => {
+const TextWithCodeBlocks = ({
+  text,
+  selectedModel,
+  onWordClick,
+  context
+}: {
+  text: string;
+  selectedModel?: string;
+  onWordClick?: (word: string, event: React.MouseEvent, context: string) => void;
+  context?: string;
+}) => {
   const parts = parseTextWithCodeBlocks(text, selectedModel);
 
   return (
@@ -1035,7 +1251,7 @@ const TextWithCodeBlocks = ({ text, selectedModel }: { text: string; selectedMod
         } else {
           return (
             <div key={index} className="prose prose-sm max-w-none">
-              {renderMathInReactNodes(parseMarkdown(part.content))}
+              {renderMathInReactNodes(parseMarkdown(part.content, onWordClick, context))}
             </div>
           );
         }
@@ -1046,6 +1262,249 @@ const TextWithCodeBlocks = ({ text, selectedModel }: { text: string; selectedMod
 
 const ChatMessage = ({ message, selectedModel }: ChatMessageProps) => {
   const isUser = message.role === "user";
+  const [tooltip, setTooltip] = useState<{
+    word: string;
+    description: string;
+    position: { x: number; y: number };
+  } | null>(null);
+  const [isLoadingDescription, setIsLoadingDescription] = useState(false);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+
+  // Функция для генерации описания слова в контексте
+  const generateWordDescription = async (word: string, context: string) => {
+    setIsLoadingDescription(true);
+    try {
+      const prompt = `Дай краткое и точное определение слова "${word}" в контексте этого текста: "${context}". Ответ должен быть на русском языке, не более 2-3 предложений.`;
+
+      console.log('🔍 Генерируем описание для слова:', word);
+
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+        },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: prompt }],
+          model: 'lite',
+          stream: true, // Включаем стриминг для плавного отображения
+          userId: 1,
+          sessionId: Date.now() // Уникальный sessionId для каждого запроса
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      // Обрабатываем стриминг
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let description = '';
+      let buffer = '';
+      let hasReceivedData = false;
+
+      if (reader) {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Оставляем неполную строку в буфере
+
+            for (const line of lines) {
+              const trimmedLine = line.trim();
+              if (trimmedLine.startsWith('data: ')) {
+                try {
+                  const jsonStr = trimmedLine.slice(6);
+                  if (jsonStr === '[DONE]') continue;
+
+                  const data = JSON.parse(jsonStr);
+                  console.log('📦 Получен чанк:', data);
+                  hasReceivedData = true;
+
+                  if (data.choices && data.choices[0]?.delta?.content) {
+                    const content = data.choices[0].delta.content;
+                    description += content;
+                    // Обновляем тултип в реальном времени
+                    setTooltip(prev => prev ? { ...prev, description } : null);
+                  } else if (data.content) {
+                    // Альтернативный формат
+                    description += data.content;
+                    setTooltip(prev => prev ? { ...prev, description } : null);
+                  }
+                } catch (e) {
+                  console.log('⚠️ Не удалось распарсить чанк:', trimmedLine, e);
+                }
+              }
+            }
+          }
+        } catch (streamError) {
+          console.error('❌ Ошибка стриминга, пробуем обычный запрос:', streamError);
+          // Fallback: пробуем обычный запрос без стриминга
+          try {
+            const fallbackResponse = await fetch('/api/chat', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                messages: [{ role: 'user', content: prompt }],
+                model: 'lite',
+                stream: false
+              })
+            });
+
+            if (fallbackResponse.ok) {
+              const data = await fallbackResponse.json();
+              description = data.content || data.response || 'Описание не найдено';
+              setTooltip(prev => prev ? { ...prev, description } : null);
+            }
+          } catch (fallbackError) {
+            console.error('❌ Fallback тоже не сработал:', fallbackError);
+          }
+        }
+      }
+
+      if (!hasReceivedData && description === '') {
+        console.log('⚠️ Стриминг не дал данных, пробуем обычный запрос');
+        // Если стриминг не дал результатов, пробуем обычный запрос
+        try {
+          const fallbackResponse = await fetch('http://localhost:1062/api/chat', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              messages: [{ role: 'user', content: prompt }],
+              model: 'lite',
+              stream: false
+            })
+          });
+
+          if (fallbackResponse.ok) {
+            const data = await fallbackResponse.json();
+            description = data.content || data.response || 'Описание не найдено';
+          }
+        } catch (fallbackError) {
+          console.error('❌ Обычный запрос тоже не сработал:', fallbackError);
+          description = 'Не удалось получить описание';
+        }
+      }
+
+      console.log('✅ Описание сгенерировано:', description);
+      return description || 'Описание не найдено';
+
+    } catch (error) {
+      console.error('❌ Ошибка при генерации описания слова:', error);
+      return `Не удалось получить описание для слова "${word}".`;
+    } finally {
+      setIsLoadingDescription(false);
+    }
+  };
+
+  // Функция копирования текста сообщения
+  const copyToClipboard = async () => {
+    try {
+      await navigator.clipboard.writeText(message.content);
+      // Можно добавить toast уведомление здесь
+      console.log('✅ Текст скопирован в буфер обмена');
+    } catch (error) {
+      console.error('❌ Не удалось скопировать текст:', error);
+      // Fallback для старых браузеров
+      const textArea = document.createElement('textarea');
+      textArea.value = message.content;
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+    }
+  };
+
+  // Функция озвучки текста через OpenAI TTS
+  const speakText = async () => {
+    if (isPlayingAudio) return;
+
+    const apiKey = import.meta.env.REACT_APP_OPENAI_API_KEY;
+    if (!apiKey) {
+      console.warn('⚠️ OpenAI API key не настроен, озвучка недоступна');
+      return;
+    }
+
+    setIsPlayingAudio(true);
+    try {
+      console.log('🔊 Начинаем озвучку текста...');
+
+      // Отправляем запрос к OpenAI TTS API
+      const response = await fetch('https://api.openai.com/v1/audio/speech', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'tts-1',
+          input: message.content,
+          voice: 'alloy', // Можно выбрать: alloy, echo, fable, onyx, nova, shimmer
+          response_format: 'mp3'
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`TTS API error: ${response.status}`);
+      }
+
+      // Получаем аудио данные
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+
+      // Создаем аудио элемент и воспроизводим
+      const audio = new Audio(audioUrl);
+      audio.onended = () => {
+        setIsPlayingAudio(false);
+        URL.revokeObjectURL(audioUrl);
+      };
+      audio.onerror = () => {
+        setIsPlayingAudio(false);
+        URL.revokeObjectURL(audioUrl);
+        console.error('❌ Ошибка воспроизведения аудио');
+      };
+
+      await audio.play();
+    } catch (error) {
+      console.error('❌ Ошибка при озвучке:', error);
+      setIsPlayingAudio(false);
+    }
+  };
+
+  // Функция обработки клика на слово
+  const handleWordClick = async (word: string, event: React.MouseEvent, context: string) => {
+    if (isLoadingDescription) {
+      console.log('⏳ Уже загружается описание, пропускаем');
+      return; // Предотвращаем множественные запросы
+    }
+
+    console.log('🎯 Клик на слово:', word, 'в контексте:', context.substring(0, 100) + '...');
+
+    const rect = (event.target as HTMLElement).getBoundingClientRect();
+    const position = {
+      x: rect.left + rect.width / 2,
+      y: rect.top - 10, // Показываем над словом
+    };
+
+    setTooltip({
+      word,
+      description: 'Загрузка...',
+      position,
+    });
+
+    const description = await generateWordDescription(word, message.content);
+    console.log('📝 Финальное описание для слова', word, ':', description);
+    setTooltip(prev => prev ? { ...prev, description } : null);
+  };
+
   // TTS variables removed - using only DeepSeek models
 
   // TTS function removed - using only DeepSeek models
@@ -1107,7 +1566,12 @@ const ChatMessage = ({ message, selectedModel }: ChatMessageProps) => {
               {/* Текст до визуализации */}
               {messageParts[0] && (
                 <div className="mb-4">
-                  <TextWithCodeBlocks text={messageParts[0]} selectedModel={selectedModel} />
+                  <TextWithCodeBlocks
+                    text={messageParts[0]}
+                    selectedModel={selectedModel}
+                    onWordClick={!isUser ? handleWordClick : undefined}
+                    context={message.content}
+                  />
                 </div>
               )}
 
@@ -1119,20 +1583,65 @@ const ChatMessage = ({ message, selectedModel }: ChatMessageProps) => {
               {/* Текст после визуализации */}
               {messageParts[1] && (
                 <div className="mt-4">
-                  <TextWithCodeBlocks text={messageParts[1]} selectedModel={selectedModel} />
+                  <TextWithCodeBlocks
+                    text={messageParts[1]}
+                    selectedModel={selectedModel}
+                    onWordClick={!isUser ? handleWordClick : undefined}
+                    context={message.content}
+                  />
                 </div>
               )}
             </>
           ) : (
             /* Если нет визуализации, показываем весь текст */
-            <TextWithCodeBlocks text={message.content} selectedModel={selectedModel} />
+            <TextWithCodeBlocks
+              text={message.content}
+              selectedModel={selectedModel}
+              onWordClick={!isUser ? handleWordClick : undefined}
+              context={message.content}
+            />
           )}
         </div>
+
+        {/* Кнопки для сообщений от ассистента */}
+        {!isUser && (
+          <div className="flex items-center gap-1 mt-2 opacity-60 hover:opacity-100 transition-opacity">
+            <button
+              onClick={copyToClipboard}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary rounded-md transition-colors"
+              title="Копировать текст"
+            >
+              <Copy className="w-3 h-3" />
+              <span className="hidden sm:inline">Копировать</span>
+            </button>
+            <button
+              onClick={speakText}
+              disabled={isPlayingAudio}
+              className="flex items-center gap-1 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary rounded-md transition-colors disabled:opacity-50"
+              title="Озвучить текст"
+            >
+              <Volume2 className="w-3 h-3" />
+              <span className="hidden sm:inline">
+                {isPlayingAudio ? 'Воспроизведение...' : 'Озвучить'}
+              </span>
+            </button>
+          </div>
+        )}
       </div>
       {isUser && (
         <div className="w-8 h-8 rounded-full bg-secondary text-secondary-foreground flex items-center justify-center font-semibold shrink-0">
           Вы
         </div>
+      )}
+
+      {/* Всплывающее окно с описанием слова */}
+      {tooltip && (
+        <WordTooltip
+          word={tooltip.word}
+          description={tooltip.description}
+          position={tooltip.position}
+          onClose={() => setTooltip(null)}
+        />
       )}
     </div>
   );

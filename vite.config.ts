@@ -10,7 +10,14 @@ export default defineConfig(({ mode }) => ({
     host: "127.0.0.1",
     port: 8081,
     strictPort: false,
-    allowedHosts: ['windexs-chat.eu.ngrok.io', 'localhost', '127.0.0.1'],
+    allowedHosts: [
+      'windexs-chat.eu.ngrok.io',
+      'cute-elliot-distinctively.ngrok-free.dev',
+      '.ngrok-free.dev',
+      '.ngrok.io',
+      'localhost',
+      '127.0.0.1'
+    ],
     hmr: {
       overlay: false, // Disable error overlay on mobile
     },

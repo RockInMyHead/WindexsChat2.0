@@ -254,14 +254,12 @@ export function WalletDashboard({ embedded = false, userId: propUserId }: Wallet
               <div className="text-sm text-gray-500">Выходных токенов</div>
             </div>
             <div className="text-center">
-              <div className="text-lg font-semibold text-purple-600">{(apiUsage.totalCost * 100).toFixed(2)}¢</div>
-              <div className="text-sm text-gray-500">Стоимость (центы)</div>
+              <div className="text-lg font-semibold text-purple-600">{formatAmount(apiUsage.totalCost)}</div>
+              <div className="text-sm text-gray-500">Общая стоимость</div>
             </div>
             <div className="text-center">
-            <div className="text-lg font-semibold text-orange-600">
-              {(apiUsage.totalTokens > 0 ? (apiUsage.totalCost / apiUsage.totalTokens * 1000000) * USD_TO_RUB_RATE : 0).toFixed(2)}
-            </div>
-              <div className="text-sm text-gray-500">₽ за 1M токенов</div>
+              <div className="text-lg font-semibold text-orange-600">1 ₽</div>
+              <div className="text-sm text-gray-500">Стоимость сообщения</div>
             </div>
           </div>
         </CardContent>

@@ -25,9 +25,11 @@ const createTables = () => {
   db.exec(`
     CREATE TABLE IF NOT EXISTS chat_sessions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
       title TEXT NOT NULL,
       created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
+      updated_at INTEGER NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     )
   `);
 
@@ -36,10 +38,12 @@ const createTables = () => {
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       session_id INTEGER,
+      user_id INTEGER NOT NULL,
       role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
       content TEXT NOT NULL,
       timestamp INTEGER NOT NULL,
-      FOREIGN KEY (session_id) REFERENCES chat_sessions (id) ON DELETE CASCADE
+      FOREIGN KEY (session_id) REFERENCES chat_sessions (id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     )
   `);
 
@@ -139,8 +143,8 @@ createTables();
 
 // Подготовка запросов
 const insertMessageStmt = db.prepare(`
-  INSERT INTO messages (session_id, role, content, timestamp, artifact_id)
-  VALUES (?, ?, ?, ?, ?)
+  INSERT INTO messages (session_id, user_id, role, content, timestamp, artifact_id)
+  VALUES (?, ?, ?, ?, ?, ?)
 `);
 
 const getMessagesBySessionStmt = db.prepare(`
@@ -153,18 +157,23 @@ const getMessagesBySessionStmt = db.prepare(`
 const getAllSessionsStmt = db.prepare(`
   SELECT id, title, created_at, updated_at
   FROM chat_sessions
+  WHERE user_id = ?
   ORDER BY updated_at DESC
 `);
 
 const insertSessionStmt = db.prepare(`
-  INSERT INTO chat_sessions (title, created_at, updated_at)
-  VALUES (?, ?, ?)
+  INSERT INTO chat_sessions (user_id, title, created_at, updated_at)
+  VALUES (?, ?, ?, ?)
 `);
 
 const updateSessionTimestampStmt = db.prepare(`
   UPDATE chat_sessions
   SET updated_at = ?
   WHERE id = ?
+`);
+
+const checkSessionOwnerStmt = db.prepare(`
+  SELECT 1 FROM chat_sessions WHERE id = ? AND user_id = ?
 `);
 
 const updateSessionTitleStmt = db.prepare(`
@@ -268,16 +277,25 @@ const getTotalApiUsageByUserStmt = db.prepare(`
 // Сервис для работы с базой данных
 export class DatabaseService {
   // Создание новой сессии чата
-  static createSession(title) {
+  static createSession(title, userId) {
     const now = Date.now();
-    const result = insertSessionStmt.run(title, now, now);
+    const result = insertSessionStmt.run(userId, title, now, now);
     return result.lastInsertRowid;
   }
 
   // Сохранение сообщения
-  static saveMessage(sessionId, role, content, artifactId = null) {
+  static saveMessage(sessionId, userId, role, content, artifactId = null) {
     const timestamp = Date.now();
-    const result = insertMessageStmt.run(sessionId, role, content, timestamp, artifactId);
+
+    // Проверяем, что сессия принадлежит пользователю
+    const ok = checkSessionOwnerStmt.get(sessionId, userId);
+    if (!ok) {
+      const err = new Error("Session not found");
+      err.code = "SESSION_NOT_FOUND";
+      throw err;
+    }
+
+    const result = insertMessageStmt.run(sessionId, userId, role, content, timestamp, artifactId);
 
     // Обновляем timestamp сессии
     updateSessionTimestampStmt.run(timestamp, sessionId);
@@ -298,8 +316,8 @@ export class DatabaseService {
   }
 
   // Получение всех сессий
-  static getAllSessions() {
-    const rows = getAllSessionsStmt.all();
+  static getAllSessions(userId) {
+    const rows = getAllSessionsStmt.all(userId);
     return rows.map(row => ({
       id: row.id,
       title: row.title,
@@ -368,9 +386,15 @@ export class DatabaseService {
 
   // Работа с пользователями и кошельком
   static createUser(username, email, initialBalance = 0.0) {
-    const now = Date.now();
-    const result = insertUserStmt.run(username, email, initialBalance, now, now);
-    return result.lastInsertRowid;
+    try {
+      const now = Date.now();
+      const result = insertUserStmt.run(username, email, initialBalance, now, now);
+      console.log('🗄️ createUser result:', { changes: result.changes, lastInsertRowid: result.lastInsertRowid });
+      return result.lastInsertRowid;
+    } catch (error) {
+      console.error('❌ createUser error:', error);
+      return 0;
+    }
   }
 
   static getUserById(userId) {

@@ -35,6 +35,7 @@ interface UseChatSendOptions {
   sessionId: number | null;
   selectedModel: string;
   internetEnabled: boolean;
+  user?: User;
   onMessageUpdate: (updater: (prev: Message[]) => Message[]) => void;
   setArtifacts: (updater: (prev: Map<number, Artifact>) => Map<number, Artifact>) => void;
   onMarketWidgetUpdate: (widget: MarketWidgetState | null) => void;
@@ -57,6 +58,7 @@ export const useChatSend = ({
   sessionId,
   selectedModel,
   internetEnabled,
+  user,
   onMessageUpdate,
   onArtifactCreated,
   onMarketWidgetUpdate,
@@ -233,8 +235,12 @@ export const useChatSend = ({
             updatedAt: Date.now()
           };
 
-          // Немедленно кладем артефакт в Map (не ждем GET API)
-          setArtifacts(prev => new Map(prev).set(artifactId, createdArtifact));
+          // Сообщаем наверх — пусть владелец состояния обновит Map
+          try {
+            onArtifactCreated?.(createdArtifact);
+          } catch (e) {
+            console.error("❌ onArtifactCreated handler failed:", e);
+          }
 
           // Создаем сообщение ассистента с артефактом
           const assistantMessage = {
@@ -269,7 +275,8 @@ export const useChatSend = ({
       onSearchProgress([]);
 
       // Создаем новый AbortController для этого запроса
-      abortControllerRef.current = new AbortController();
+      const controller = new window.AbortController();
+      abortControllerRef.current = controller;
 
       let assistantContent = "";
       let hasStartedAssistantMessage = false;
@@ -351,7 +358,9 @@ export const useChatSend = ({
         (cost: TokenCost) => {
           onTokenCost(cost);
         },
-        abortControllerRef.current?.signal
+        controller.signal,
+        user?.id,
+        sessionIdToUse
       );
 
       // Сохраняем сообщение пользователя в базу данных

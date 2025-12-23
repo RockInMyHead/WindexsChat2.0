@@ -52,7 +52,7 @@
   }
 
   /* Ensure proper spacing around input area */
-  .chat-input-area .max-w-3xl {
+  .chat-input-area .max-w-5xl {
     padding-left: 0.75rem;
     padding-right: 0.75rem;
   }
@@ -89,7 +89,7 @@
 /* Additional mobile optimizations */
 @media screen and (max-width: 480px) {
   /* Smaller screens - adjust spacing */
-  .chat-input-area .max-w-3xl {
+  .chat-input-area .max-w-5xl {
     padding-left: 0.5rem;
     padding-right: 0.5rem;
   }

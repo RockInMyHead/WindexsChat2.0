@@ -9,7 +9,7 @@ import { ChatSidebar } from "@/components/ChatSidebar";
 import { TokenCostDisplay } from "@/components/TokenCostDisplay";
 import { BtcWidget } from "@/components/BtcWidget";
 import { WebsiteArtifactCard } from "@/components/WebsiteArtifactCard";
-import { SidebarProvider } from "@/components/ui/sidebar";
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import {
   Select,
   SelectContent,
@@ -80,8 +80,15 @@ const Chat = () => {
     sessionId: chatSession.sessionId,
     selectedModel,
     internetEnabled,
+    user,
     onMessageUpdate: setMessages,
-    setArtifacts: artifacts.setArtifacts,
+    onArtifactCreated: (artifact) => {
+      artifacts.setArtifacts(prev => {
+        const next = new Map(prev);
+        next.set(artifact.id!, artifact);
+        return next;
+      });
+    },
     onMarketWidgetUpdate: setMarketWidget,
     onThinkingUpdate: setThinkingMessages,
     onPlanningUpdate: (plan, currentStep, isPlanning) => {
@@ -224,11 +231,32 @@ const Chat = () => {
   const isMarketIntent = (text: string) =>
     /\b(курс|цена|котировк|биткоин|bitcoin|btc|график|chart)\b/i.test(text);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const messageText = input.trim();
+    console.log('handleSubmit called:', {
+      messageText,
+      isLoading: chatSend.isLoading,
+      isSending: chatSend.isSending,
+      hasText: !!messageText
+    });
+
     if (!chatSend.isLoading && !chatSend.isSending && messageText) {
-      chatSend.sendMessage(messageText, messages);
+      console.log('Sending message:', messageText);
+      try {
+        await chatSend.sendMessage(messageText, messages);
+        console.log('Message sent successfully, clearing input');
+        setInput(''); // Очищаем поле ввода после успешной отправки
+      } catch (error) {
+        console.error('Failed to send message:', error);
+        // Не очищаем поле при ошибке, чтобы пользователь мог попробовать снова
+      }
+    } else {
+      console.log('Submit blocked:', {
+        loading: chatSend.isLoading,
+        sending: chatSend.isSending,
+        empty: !messageText
+      });
     }
   };
 
@@ -343,7 +371,7 @@ const Chat = () => {
 
   return (
     <SidebarProvider>
-      <div className="flex h-screen bg-background">
+      <div className="flex h-screen w-full bg-background">
         <ChatSidebar
           onSelectChat={handleSelectChat}
           currentSessionId={chatSession.sessionId}
@@ -351,7 +379,7 @@ const Chat = () => {
           onChatDeleted={() => setSidebarRefreshTrigger(prev => prev + 1)}
         />
 
-        <div className="flex flex-col flex-1 h-full overflow-hidden">
+        <SidebarInset className="flex flex-col flex-1 min-w-0 h-full overflow-hidden">
           <ChatHeader
             onNewChat={handleNewChat}
             internetEnabled={internetEnabled}
@@ -361,8 +389,8 @@ const Chat = () => {
             usdToRubRate={USD_TO_RUB_RATE}
           />
 
-          <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
-            <div className="max-w-3xl mx-auto px-2 sm:px-4 py-2 sm:py-4">
+          <div className="flex-1 w-full overflow-y-auto overflow-x-hidden min-h-0">
+            <div className="w-full max-w-5xl mx-auto px-2 sm:px-4 py-2 sm:py-4">
               {messages.length === 0 && (
                 <div className="text-center py-12 sm:py-20 animate-fade-in">
                   <h2 className="text-2xl sm:text-3xl font-semibold text-foreground mb-4">
@@ -502,8 +530,8 @@ const Chat = () => {
           )}
 
           {/* Input area */}
-          <div className="border-t bg-background p-4">
-            <div className="max-w-3xl mx-auto">
+          <div className="w-full border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+            <div className="w-full max-w-5xl mx-auto px-2 sm:px-4">
               <form onSubmit={handleSubmit} className="flex gap-3 items-end">
                 <div className="flex-1 relative">
                   <Textarea
@@ -512,7 +540,7 @@ const Chat = () => {
                     onChange={(e) => setInput(e.target.value)}
                     placeholder="Введите сообщение..."
                     className="min-h-[44px] max-h-32 resize-none pr-12"
-                    disabled={chatSend.isLoading || isProcessingFile}
+                    disabled={chatSend.isLoading || chatSend.isSending || isProcessingFile}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
@@ -528,7 +556,7 @@ const Chat = () => {
                     size="sm"
                     className="absolute right-2 bottom-2 h-8 w-8 p-0"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={chatSend.isLoading || isProcessingFile}
+                    disabled={chatSend.isLoading || chatSend.isSending || isProcessingFile}
                     title="Прикрепить файл"
                   >
                     <Paperclip className="h-4 w-4" />
@@ -587,7 +615,7 @@ const Chat = () => {
               </p>
             </div>
           </div>
-        </div>
+      </SidebarInset>
       </div>
     </SidebarProvider>
   );

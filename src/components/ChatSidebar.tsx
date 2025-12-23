@@ -93,7 +93,15 @@ export function ChatSidebar({ onSelectChat, currentSessionId, refreshTrigger, on
   };
 
   return (
-    <Sidebar className={collapsed ? "w-14" : "w-64"} collapsible="icon" side="left">
+    <Sidebar
+      side="left"
+      collapsible="icon"
+      className="shrink-0"
+      style={{
+        "--sidebar-width": "16rem",       // аналог w-64
+        "--sidebar-width-icon": "3.5rem", // аналог w-14
+      } as React.CSSProperties}
+    >
       <SidebarContent className="bg-background border-r border-border">
         <div className="p-4 flex items-center justify-between">
           {!collapsed && (

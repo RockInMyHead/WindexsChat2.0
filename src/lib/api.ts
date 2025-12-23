@@ -29,15 +29,19 @@ export interface Artifact {
 }
 
 class ApiClient {
-  private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${API_BASE_URL}${endpoint}`;
 
+    // Получаем userId из localStorage для аутентификации
+    const rawUserId = localStorage.getItem("userId");
+
     const response = await fetch(url, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options?.headers,
-      },
       ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(rawUserId ? { "x-user-id": rawUserId } : {}),
+        ...(options.headers || {}),
+      },
     });
 
     if (!response.ok) {
@@ -124,9 +128,8 @@ class ApiClient {
 
   // Получить артефакт по ID
   async getArtifact(artifactId: number): Promise<Artifact> {
-    const url = `/api/artifacts/${artifactId}`;
-    console.log("🔍 GET artifact URL:", url, "artifactId:", artifactId);
-    return this.request(url);
+    console.log("🔍 GET artifact artifactId:", artifactId);
+    return this.request(`/artifacts/${artifactId}`);
   }
 
   // Обновить артефакт

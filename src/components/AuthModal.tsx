@@ -10,7 +10,7 @@ import { User, Mail, Lock, Eye, EyeOff } from "lucide-react";
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onAuthSuccess: (user: { id: string; name: string; email: string }, initialMessage?: string) => void;
+  onAuthSuccess: (user: { id: number; name: string; email: string }, initialMessage?: string) => void;
   initialMessage?: string;
 }
 
@@ -40,7 +40,7 @@ export const AuthModal = ({ isOpen, onClose, onAuthSuccess, initialMessage }: Au
     setIsLoading(true);
 
     try {
-      // Вызываем API для получения/создания пользователя
+      // Вызываем API для создания нового пользователя
       const response = await fetch('/api/users/current', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -57,14 +57,15 @@ export const AuthModal = ({ isOpen, onClose, onAuthSuccess, initialMessage }: Au
 
         // Сохраняем реального пользователя в localStorage
         localStorage.setItem("user", JSON.stringify({
-          id: user.id.toString(),
+          id: user.id,
           name: user.username,
           email: user.email
         }));
+        localStorage.setItem("userId", String(user.id));
         localStorage.setItem("isAuthenticated", "true");
 
         onAuthSuccess({
-          id: user.id.toString(),
+          id: user.id,
           name: user.username,
           email: user.email
         }, initialMessage);
@@ -131,14 +132,15 @@ export const AuthModal = ({ isOpen, onClose, onAuthSuccess, initialMessage }: Au
 
         // Сохраняем реального пользователя в localStorage
         localStorage.setItem("user", JSON.stringify({
-          id: user.id.toString(),
+          id: user.id,
           name: user.username,
           email: user.email
         }));
+        localStorage.setItem("userId", String(user.id));
         localStorage.setItem("isAuthenticated", "true");
 
         onAuthSuccess({
-          id: user.id.toString(),
+          id: user.id,
           name: user.username,
           email: user.email
         }, initialMessage);

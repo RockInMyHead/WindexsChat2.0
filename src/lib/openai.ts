@@ -19,18 +19,19 @@ const TOKEN_PRICES = {
   'deepseek-reasoner': { input: 0.55, output: 2.19 },
 };
 
-// Функция расчета стоимости токенов
+// Функция расчета стоимости токенов (1 рубль за сообщение)
 export const calculateTokenCost = (usage: any, model: string): TokenCost => {
   const actualModel = getActualModel(model);
-  const prices = TOKEN_PRICES[actualModel] || TOKEN_PRICES['deepseek-chat'];
 
   const inputTokens = usage?.prompt_tokens || 0;
   const outputTokens = usage?.completion_tokens || 0;
   const totalTokens = usage?.total_tokens || (inputTokens + outputTokens);
 
-  const inputCost = (inputTokens / 1000000) * prices.input;
-  const outputCost = (outputTokens / 1000000) * prices.output;
-  const totalCost = inputCost + outputCost;
+  // Фиксированная стоимость: 1 рубль за сообщение
+  // Конвертируем в USD (курс 85 рублей за доллар)
+  const totalCost = 1 / 85; // 1 рубль = 1/85 USD
+  const inputCost = totalCost * 0.3; // Примерное распределение (30% на input)
+  const outputCost = totalCost * 0.7; // 70% на output
 
   return {
     inputTokens,
@@ -660,7 +661,9 @@ const handleAdvancedModelLogic = async (
   onPlanGenerated?: (plan: PlanStep[]) => void,
   onStepStart?: (stepIndex: number, step: PlanStep) => void,
   onSearchProgress?: (queries: string[]) => void,
-  internetEnabled?: boolean
+  internetEnabled?: boolean,
+  userId?: number,
+  sessionId?: number
 ): Promise<string> => {
   const actualModel = getActualModel(selectedModel);
   // ✅ FIX: modelParams объявляем ДО любых ветвлений
@@ -706,7 +709,7 @@ const handleAdvancedModelLogic = async (
       // Используем стандартную модель без планирования
       const actualModel = getActualModel(selectedModel);
       
-      const response = await fetch(`${API_BASE_URL}/chat`, {
+      const requestOptions: RequestInit = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -716,9 +719,24 @@ const handleAdvancedModelLogic = async (
           model: actualModel,
           stream: true,
           ...modelParams,
+          userId: userId,
+          sessionId: sessionId,
         }),
-        signal: abortSignal,
-      });
+      };
+
+      const isAbortSignal = (v: unknown): v is AbortSignal =>
+        !!v &&
+        typeof v === "object" &&
+        typeof (v as any).aborted === "boolean" &&
+        typeof (v as any).addEventListener === "function";
+
+      if (isAbortSignal(abortSignal)) {
+        requestOptions.signal = abortSignal;
+      } else if (abortSignal != null) {
+        console.warn("⚠️ Invalid abortSignal in math expression (ignored):", abortSignal);
+      }
+
+      const response = await fetch(`${API_BASE_URL}/chat`, requestOptions);
 
       if (!response.ok) {
         throw new Error(`API request failed: ${response.status}`);
@@ -782,7 +800,7 @@ const handleAdvancedModelLogic = async (
   console.log(`📋 Step 1: Plan Generation | Query: "${userMessage.content}" (${userMessage.content.length} chars) | Model: ${selectedModel}`);
   let plan: PlanStep[] = [];
   try {
-    plan = await generateResponsePlan(userMessage.content, selectedModel);
+    plan = await generateResponsePlan(userMessage.content, selectedModel, abortSignal);
     const totalQueries = plan.reduce((sum, step) => sum + (step.searchQueries?.length || 0), 0);
     console.log(`✅ Plan Generated | Steps: ${plan.length} | Total search queries: ${totalQueries}`);
 
@@ -967,7 +985,7 @@ ${plan.map((step, idx) => `${idx + 1}. ${step.description}${step.searchQueries ?
   console.log('🔍 Final search results length:', finalSearchResults.length);
 
   // Отправляем финальный запрос к API
-  const response = await fetch(`${API_BASE_URL}/chat`, {
+  const requestOptions: RequestInit = {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -977,9 +995,37 @@ ${plan.map((step, idx) => `${idx + 1}. ${step.description}${step.searchQueries ?
       model: actualModel,
       stream: true,
       ...modelParams,
+      userId: userId,
+      sessionId: sessionId,
     }),
-    signal: abortSignal,
-  });
+  };
+
+  // Диагностика для отладки
+  console.log("🧪 abortSignal typeof:", typeof abortSignal, abortSignal);
+
+  // Валидация AbortSignal
+  const isAbortSignal = (v: unknown): v is AbortSignal =>
+    !!v &&
+    typeof v === "object" &&
+    typeof (v as any).aborted === "boolean" &&
+    typeof (v as any).addEventListener === "function";
+
+  if (isAbortSignal(abortSignal)) {
+    requestOptions.signal = abortSignal;
+  } else if (abortSignal != null) {
+    console.warn(
+      "⚠️ Invalid abortSignal ignored:",
+      abortSignal,
+      "typeof:",
+      typeof abortSignal,
+      "ctor:",
+      (abortSignal as any)?.constructor?.name,
+      "instanceof AbortSignal:",
+      typeof AbortSignal !== "undefined" && abortSignal ? (abortSignal as any) instanceof AbortSignal : "n/a"
+    );
+  }
+
+  const response = await fetch(`${API_BASE_URL}/chat`, requestOptions);
 
   if (!response.ok) {
     throw new Error(`API request failed: ${response.status}`);
@@ -1341,6 +1387,108 @@ export const detectWebsiteIntent = (userMessage: string): boolean => {
 };
 
 // Функция для генерации веб-артефакта через DeepSeek
+// Системные промпты для генерации артефактов
+const systemPromptFull = `
+Ты — эксперт-разработчик. Генерируешь небольшой React + TypeScript + Vite проект.
+
+КРИТИЧНО: верни ТОЛЬКО валидный JSON. Никакого markdown. Начни ответ с { и закончи }.
+
+Ограничения размера (обязательно):
+- Максимум 4 файла: index.html, main.tsx, App.tsx, index.css
+- Никаких дополнительных компонентов/конфигов/пакетных файлов.
+- Каждый файл <= 220 строк и <= 7000 символов.
+- Никаких многоточий "..." и обрезанных фрагментов. Код должен быть полным.
+
+Tailwind:
+- В index.css НЕ генерируй большие CSS-таблицы.
+- Разрешено только:
+  @tailwind base;
+  @tailwind components;
+  @tailwind utilities;
+  + максимум 30 строк своих классов.
+
+Структура ответа строго такая:
+{
+  "assistantText": "2-3 предложения",
+  "artifact": {
+    "title": "Название",
+    "files": {
+      "index.html": "...",
+      "main.tsx": "...",
+      "App.tsx": "...",
+      "index.css": "..."
+    },
+    "deps": {
+      "react": "^18.2.0",
+      "react-dom": "^18.2.0",
+      "tailwindcss": "^3.4.0"
+    }
+  }
+}
+`.trim();
+
+const systemPromptCompact = `
+Ты — эксперт-разработчик. Генерируешь компактный статический сайт (без React/TS/Vite).
+
+КРИТИЧНО: верни ТОЛЬКО валидный JSON. Никакого markdown. Начни ответ с { и закончи }.
+
+Ограничения:
+- Ровно 3 файла: index.html, styles.css, app.js
+- Каждый файл <= 180 строк и <= 5000 символов
+- Никаких "..." и обрезанных фрагментов
+
+Структура ответа строго такая:
+{
+  "assistantText": "2-3 предложения",
+  "artifact": {
+    "title": "Название",
+    "files": {
+      "index.html": "...",
+      "styles.css": "...",
+      "app.js": "..."
+    },
+    "deps": {}
+  }
+}
+`.trim();
+
+// Вспомогательные функции
+const isTruncatedJson = (e: unknown) =>
+  String((e as any)?.message ?? e).includes("complete JSON object");
+
+async function callArtifactModel(
+  userPrompt: string,
+  model: string,
+  systemPrompt: string,
+  maxTokens: number
+): Promise<string> {
+  const resp = await fetch(`${API_BASE_URL}/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+        ],
+      model: model === "lite" ? "deepseek-chat" : "deepseek-reasoner",
+        stream: false,
+        response_format: { type: "json_object" },
+      max_tokens: maxTokens,
+        temperature: 0.2,
+      }),
+    });
+
+  if (!resp.ok) {
+    throw new Error(`Artifact API failed: ${resp.status} ${resp.statusText}`);
+  }
+
+  const data = await resp.json();
+
+  // Подстройте под ваш формат ответа
+  const raw = data?.choices?.[0]?.message?.content ?? data?.content ?? "";
+  return raw;
+}
+
 export const generateWebsiteArtifact = async (
   userPrompt: string,
   model: string = "deepseek-chat"
@@ -1349,221 +1497,66 @@ export const generateWebsiteArtifact = async (
     console.log('🎨 STARTING website artifact generation for prompt:', userPrompt);
     console.log('🔧 Using model:', model);
 
-    // Вызываем DeepSeek API для генерации сайта
-    console.log('🚀 Calling DeepSeek API for website generation');
+    // 1) Сначала пытаемся с полным React промптом
+    console.log('🚀 Attempt 1: Calling with full React prompt');
+    const raw1 = await callArtifactModel(userPrompt, model, systemPromptFull, 5500);
 
-    const systemPrompt = `Ты — эксперт-разработчик, создающий полноценные веб-проекты на React + TypeScript + Vite.
-
-КРИТИЧНО ВАЖНО: Ты ДОЛЖЕН вернуть ТОЛЬКО чистый JSON без какого-либо markdown форматирования. Никаких \`\`\`json блоков, никаких объяснений, никакого дополнительного текста. Начинай ответ прямо с { и заканчивай }.
-
-Генерируй файлы БЕЗ папок в именах (просто main.tsx, App.tsx, index.css) - я сам расставлю правильные пути!
-
-Структура ответа должна быть такой:
-{
-  "assistantText": "Краткое описание созданного сайта (2-3 предложения)",
-  "artifact": {
-    "title": "Название сайта",
-    "files": {
-      "index.html": "HTML код с <script type=\"module\" src=\"/src/main.tsx\"></script>",
-      "main.tsx": "React entry point с импортами (import App from './App', import './index.css')",
-      "App.tsx": "Главный компонент React",
-      "index.css": "Tailwind CSS стили",
-      "Component1.tsx": "дополнительные компоненты (если нужны)",
-      ...другие файлы
-    },
-    "deps": {
-      "react": "^18.2.0",
-      "react-dom": "^18.2.0",
-      "tailwindcss": "^3.4.0",
-      ...другие зависимости если нужны
-    }
-  }
-}
-
-ОБЯЗАТЕЛЬНЫЕ ТРЕБОВАНИЯ:
-1. Всегда включай файлы: /index.html, /src/main.tsx, /src/App.tsx, /src/index.css
-2. Используй Tailwind CSS через NPM зависимость (НЕ CDN!)
-3. Создавай СОВРЕМЕННЫЙ, КРАСИВЫЙ дизайн с ОТЛИЧНЫМ UX
-4. Код должен быть полностью рабочим и self-contained
-5. Используй современные практики React (hooks, функциональные компоненты)
-6. ОБЯЗАТЕЛЬНО разделяй код на компоненты в /src/components/
-7. Делай сайты ИНТЕРАКТИВНЫМИ и ФУНКЦИОНАЛЬНЫМИ, а не просто статичными
-8. В deps ОБЯЗАТЕЛЬНО включи: "tailwindcss": "^3.4.0"
-9. НЕ используй React/JSX внутри строк JSON - пиши обычный JavaScript
-10. Не более 4 файлов всего (index.html, main.tsx, App.tsx, styles.css)
-11. Общий объём всех файлов <= 20KB
-12. НЕ добавляй комментарии в код - только чистый код
-
-ДИЗАЙН-ТРЕБОВАНИЯ (ОБЯЗАТЕЛЬНО):
-- Используй современные градиенты (bg-gradient-to-br, from-blue-500 to-purple-600)
-- Добавляй тени и hover эффекты (shadow-xl, hover:shadow-2xl, transition-all)
-- Делай отзывчивый дизайн (responsive breakpoints: sm:, md:, lg:, xl:)
-- Добавляй анимации (animate-fade-in, animate-bounce, группируй transition)
-- Используй красивую типографику (font-bold, text-4xl, leading-relaxed)
-- Добавляй иконки через emoji или SVG
-- Создавай пространство (py-8, px-6, gap-6, space-y-4)
-- Используй современные цвета (slate-900, indigo-500, emerald-400)
-
-ИНТЕРАКТИВНОСТЬ (ОБЯЗАТЕЛЬНО):
-- Добавляй useState для управления состоянием
-- Кнопки должны делать что-то полезное (не просто декорация)
-- Формы должны обрабатывать ввод данных
-- Добавляй модальные окна, тултипы, dropdown меню
-- Используй useEffect для сайд-эффектов
-- Добавляй localStorage для сохранения данных
-- Делай анимированные переходы между состояниями
-
-СТРУКТУРА КОМПОНЕНТОВ (РЕКОМЕНДУЕТСЯ):
-/src/App.tsx - главный компонент с логикой
-/src/components/Header.tsx - шапка сайта
-/src/components/Hero.tsx - главный блок
-/src/components/Features.tsx - секция преимуществ
-/src/components/Contact.tsx - форма контактов
-/src/components/Footer.tsx - подвал
-
-ПРИМЕРЫ ОТЛИЧНЫХ РЕШЕНИЙ:
-
-Для лендинга:
-- Hero с градиентом и CTA кнопкой
-- Секция с карточками преимуществ (минимум 3-6 карточек)
-- Форма подписки/контактов с валидацией
-- Testimonials с отзывами клиентов
-- Footer с социальными ссылками
-
-Для приложения:
-- Боковая навигация или табы
-- Интерактивные формы с обработкой данных
-- Модальные окна для действий
-- Анимированные списки (добавление/удаление)
-- Уведомления об успехе/ошибке
-
-Для игры:
-- Canvas или div-based рендеринг
-- Обработка клавиатуры/мыши
-- Система очков и рекордов
-- Кнопки управления для мобильных
-- Звуковые эффекты (опционально)
-
-СТРУКТУРА index.html:
-<!DOCTYPE html>
-<html lang="ru">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Название</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
-
-СТРУКТУРА main.tsx:
-import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App'
-import './index.css'
-
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)
-
-СТРУКТУРА index.css (обязательно создай этот файл):
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-КАЧЕСТВО КОДА:
-- Пиши чистый, читаемый код с комментариями
-- Используй TypeScript типы (React.FC, useState<type>)
-- Группируй логику в хуки (useGameLogic, useFormValidation)
-- Выноси константы в верх файла
-- Используй деструктуризацию и spread оператор
-
-НЕ ДЕЛАЙ:
-❌ Простые статичные страницы с одним текстом
-❌ Минималистичные сайты без функционала
-❌ CDN загрузки (только NPM dependencies)
-❌ Inline стили (только Tailwind классы)
-
-ДЕЛАЙ:
-✅ Многокомпонентные проекты с хорошей архитектурой
-✅ Интерактивные элементы с реальным функционалом
-✅ Красивый modern дизайн с градиентами и анимациями
-✅ Адаптивность для всех экранов
-✅ Полезный UX с понятными действиями
-
-ПРИМЕР (ТОЛЬКО JSON):
-{"assistantText": "Создан сайт", "artifact": {"title": "Сайт", "files": {"/src/App.tsx": "export default function App() { return <div>Hello</div>; }"}, "deps": {}}}
-
-ОТВЕЧАЙ ТОЛЬКО JSON, БЕЗ МАРКДАУНА!`;
-
-    const response = await fetch(`${API_BASE_URL}/chat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        model: model === 'lite' ? 'deepseek-chat' : 'deepseek-reasoner',
-        stream: false,
-        // Включаем JSON mode если поддерживается
-        response_format: { type: "json_object" },
-        // Увеличиваем лимиты для генерации сайтов
-        max_tokens: 8000,
-        temperature: 0.2,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`DeepSeek API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
-
-    if (!content) {
-      throw new Error('No content in DeepSeek response');
-    }
-
-    // Парсим JSON из ответа DeepSeek
-    let parsedData;
     try {
-      parsedData = safeParseArtifactResponse(content);
-      console.log("✅ JSON parsing successful");
-    } catch (parseError: any) {
-      console.error("❌ Failed to parse JSON from DeepSeek. Content preview:", content.substring(0, 800) + "...");
-      console.error("❌ Parse error details:", parseError?.message ?? parseError);
+      const parsed = safeParseArtifactResponse(raw1);
+      console.log("✅ Full React artifact generated successfully");
+      return processArtifact(parsed);
+    } catch (e) {
+      // 2) Если JSON обрезан — ретрай с компактным промптом
+      if (!isTruncatedJson(e)) throw e;
 
-      // ВАЖНО: не делаем regex emergency, он ломает на JSX {}
-      // ВАЖНО: не делаем fallback artifact → это приводит к 400 на /artifacts
-
-      throw new Error(
-        "Website artifact generation failed: model returned invalid or truncated JSON. " +
-        "Try increasing max_tokens or generating a smaller artifact."
-      );
+      console.log('⚠️ JSON truncated, retrying with compact prompt');
+      const raw2 = await callArtifactModel(userPrompt, model, systemPromptCompact, 3000);
+      const parsed2 = safeParseArtifactResponse(raw2);
+      console.log("✅ Compact artifact generated successfully");
+      return processArtifact(parsed2);
     }
+  } catch (error) {
+    console.error('❌ Error generating website artifact:', error);
+    throw error;
+  }
+};
 
-    // Валидация структуры
-    if (!parsedData.artifact || !parsedData.artifact.files) {
+// Вспомогательная функция для обработки артефакта
+function processArtifact(parsed: any): { artifact: WebsiteArtifact; assistantText: string } {
+    if (!parsed.artifact || !parsed.artifact.files) {
       throw new Error('Invalid artifact structure');
     }
 
-    // Проверка обязательных файлов (проверяем как с путями, так и без)
-    const requiredFiles = ['index.html', 'App.tsx', 'main.tsx', 'index.css'];
-    const requiredFilesWithPaths = ['/index.html', '/src/App.tsx', '/src/main.tsx', '/src/index.css'];
+    // Определяем тип артефакта по наличию файлов
+    const hasReactFiles = parsed.artifact.files['App.tsx'] || parsed.artifact.files['main.tsx'];
+    const hasVanillaFiles = parsed.artifact.files['app.js'] || parsed.artifact.files['styles.css'];
+
+    let requiredFiles: string[];
+    let requiredFilesWithPaths: string[];
+
+    if (hasReactFiles && !hasVanillaFiles) {
+      // React артефакт
+      requiredFiles = ['index.html', 'App.tsx', 'main.tsx', 'index.css'];
+      requiredFilesWithPaths = ['/index.html', '/src/App.tsx', '/src/main.tsx', '/src/index.css'];
+      console.log('🔧 Detected React artifact');
+    } else if (hasVanillaFiles && !hasReactFiles) {
+      // Vanilla JS артефакт
+      requiredFiles = ['index.html', 'app.js', 'styles.css'];
+      requiredFilesWithPaths = ['/index.html', '/app.js', '/styles.css'];
+      console.log('🔧 Detected vanilla JS artifact');
+    } else {
+      // Неопределенный тип - предполагаем React
+      requiredFiles = ['index.html', 'App.tsx', 'main.tsx', 'index.css'];
+      requiredFilesWithPaths = ['/index.html', '/src/App.tsx', '/src/main.tsx', '/src/index.css'];
+      console.log('🔧 Unknown artifact type, assuming React');
+    }
 
     // Создаем массив отсутствующих файлов
     const missingFiles: string[] = [];
     requiredFiles.forEach(file => {
-      const hasFile = parsedData.artifact.files[file] ||
-                      parsedData.artifact.files[`/src/${file}`] ||
-                      parsedData.artifact.files[`/${file}`];
+      const hasFile = parsed.artifact.files[file] ||
+                      parsed.artifact.files[`/src/${file}`] ||
+                      parsed.artifact.files[`/${file}`];
       if (!hasFile) {
         missingFiles.push(file);
       }
@@ -1576,18 +1569,20 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     // Исправляем структуру файлов для Vite (перемещаем файлы в правильные папки)
     const correctedFiles: Record<string, string> = {};
 
-    // Проверяем, что parsedData имеет правильную структуру
-    if (!parsedData?.artifact?.files || typeof parsedData.artifact.files !== 'object') {
+    // Проверяем, что parsed имеет правильную структуру
+    if (!parsed?.artifact?.files || typeof parsed.artifact.files !== 'object') {
       throw new Error('Invalid artifact structure: missing or invalid files');
     }
 
-    // Сначала переносим существующие файлы в правильные папки
-    Object.entries(parsedData.artifact.files).forEach(([filePath, content]) => {
+    // Корректируем структуру файлов в зависимости от типа артефакта
+    Object.entries(parsed.artifact.files).forEach(([filePath, content]) => {
       if (typeof filePath !== 'string' || typeof content !== 'string') {
         console.warn(`Skipping invalid file entry: ${filePath}`);
         return;
       }
 
+      if (hasReactFiles) {
+        // Для React артефактов - перемещаем в /src/
       if (filePath === 'main.tsx' || filePath === 'main.jsx') {
         correctedFiles['/src/main.tsx'] = content.replace(/from '\.\/App'/g, "from './App'");
       } else if (filePath === 'App.tsx' || filePath === 'App.jsx') {
@@ -1602,22 +1597,39 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         );
         correctedFiles['/index.html'] = correctedContent;
       } else {
-        // Сохраняем остальные файлы как есть
         correctedFiles[filePath.startsWith('/') ? filePath : `/${filePath}`] = content;
+        }
+      } else {
+        // Для vanilla JS артефактов - оставляем в корне
+        if (filePath === 'index.html') {
+          // Исправляем ссылки на скрипты
+          let correctedContent = content;
+          correctedContent = correctedContent.replace(/src="[^"]*app\.js"/g, 'src="/app.js"');
+          correctedContent = correctedContent.replace(/href="[^"]*styles\.css"/g, 'href="/styles.css"');
+          correctedFiles['/index.html'] = correctedContent;
+        } else if (filePath === 'app.js') {
+          correctedFiles['/app.js'] = content;
+        } else if (filePath === 'styles.css') {
+          correctedFiles['/styles.css'] = content;
+        } else {
+          correctedFiles[filePath.startsWith('/') ? filePath : `/${filePath}`] = content;
+        }
       }
     });
 
     // Обновляем файлы в артефакте
-    parsedData.artifact.files = correctedFiles;
+    parsed.artifact.files = correctedFiles;
 
     // Добавляем недостающие файлы с правильными путями
-    if (!parsedData.artifact.files['/index.html']) {
-      parsedData.artifact.files['/index.html'] = `<!DOCTYPE html>
+    if (hasReactFiles) {
+      // Дефолтные файлы для React артефактов
+      if (!correctedFiles['/index.html']) {
+        correctedFiles['/index.html'] = `<!DOCTYPE html>
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>${parsedData.artifact.title || 'Сайт'}</title>
+    <title>${parsed.artifact.title || 'Сайт'}</title>
   </head>
   <body>
     <div id="root"></div>
@@ -1626,8 +1638,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 </html>`;
     }
 
-    if (!parsedData.artifact.files['/src/main.tsx']) {
-      parsedData.artifact.files['/src/main.tsx'] = `import React from 'react'
+      if (!correctedFiles['/src/main.tsx']) {
+        correctedFiles['/src/main.tsx'] = `import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import './index.css'
@@ -1639,8 +1651,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 )`;
     }
 
-    if (!parsedData.artifact.files['/src/App.tsx']) {
-      parsedData.artifact.files['/src/App.tsx'] = `export default function App() {
+      if (!correctedFiles['/src/App.tsx']) {
+        correctedFiles['/src/App.tsx'] = `export default function App() {
   return (
     <div className="min-h-screen bg-blue-50 flex items-center justify-center">
       <div className="text-center">
@@ -1656,24 +1668,71 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 }`;
     }
 
-    if (!parsedData.artifact.files['/src/index.css']) {
-      parsedData.artifact.files['/src/index.css'] = `@tailwind base;
+      if (!correctedFiles['/src/index.css']) {
+        correctedFiles['/src/index.css'] = `@tailwind base;
 @tailwind components;
 @tailwind utilities;`;
+      }
+    } else {
+      // Дефолтные файлы для vanilla JS артефактов
+      if (!correctedFiles['/index.html']) {
+        correctedFiles['/index.html'] = `<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${parsed.artifact.title || 'Сайт'}</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div id="app"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>`;
+      }
+
+      if (!correctedFiles['/app.js']) {
+        correctedFiles['/app.js'] = `// Простое vanilla JS приложение
+document.addEventListener('DOMContentLoaded', function() {
+  const app = document.getElementById('app');
+  if (app) {
+    app.innerHTML = \`
+      <div style="min-height: 100vh; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center;">
+        <div style="text-align: center; color: white;">
+          <h1 style="font-size: 3rem; font-weight: bold; margin-bottom: 1rem;">
+            Сайт создан!
+          </h1>
+          <p style="font-size: 1.25rem;">
+            Добро пожаловать на новый сайт
+          </p>
+        </div>
+      </div>
+    \`;
+  }
+});`;
+      }
+
+      if (!correctedFiles['/styles.css']) {
+        correctedFiles['/styles.css'] = `/* Простые стили */
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+#app {
+  min-height: 100vh;
+}`;
+      }
     }
 
     console.log('✅ Website artifact generated successfully');
     
     return {
-      artifact: parsedData.artifact,
-      assistantText: parsedData.assistantText || 'Я создал для вас веб-сайт!'
+      artifact: parsed.artifact,
+      assistantText: parsed.assistantText || 'Я создал для вас веб-сайт!'
     };
-
-  } catch (error) {
-    console.error('❌ Error generating website artifact:', error);
-    throw error;
-  }
-};
+}
 
 export const sendChatMessage = async (
   messages: Message[],
@@ -1683,8 +1742,8 @@ export const sendChatMessage = async (
   onStepStart?: (stepIndex: number, step: PlanStep) => void,
   onSearchProgress?: (queries: string[]) => void,
   internetEnabled?: boolean,
-  abortSignal?: AbortSignal,
   onTokenCost?: (tokenCost: TokenCost) => void,
+  abortSignal?: AbortSignal,
   userId?: number,
   sessionId?: number
 ): Promise<string> => {
@@ -1693,12 +1752,15 @@ export const sendChatMessage = async (
   const actualModel = getActualModel(selectedModel);
   console.log(`🚀 sendChatMessage | Selected: ${selectedModel} → DeepSeek: ${actualModel} | Messages: ${messages.length} | Internet: ${internetEnabled} | Last message: "${userMessage?.content?.substring(0, 80) || 'none'}..." | Summary: [${messageSummary}]`);
 
+  // Диагностика abortSignal
+  console.log("🧪 abortSignal:", abortSignal, "typeof:", typeof abortSignal);
+
   console.log(`🔍 Model Check | Selected: ${selectedModel} | DeepSeek: ${actualModel} | Advanced logic: ${selectedModel === 'pro' || (selectedModel === 'lite' && internetEnabled)}`);
 
   // СПЕЦИАЛЬНАЯ ЛОГИКА ДЛЯ ПРОДВИНУТЫХ МОДЕЛЕЙ (Pro или Lite с интернетом)
   if (selectedModel === 'pro' || (selectedModel === 'lite' && internetEnabled)) {
     console.log(`🎯 Advanced Logic | Selected: ${selectedModel} → DeepSeek: ${getActualModel(selectedModel)} | Internet: ${internetEnabled} | User query: "${userMessage?.content?.substring(0, 100) || 'none'}..."`);
-    return handleAdvancedModelLogic(messages, userMessage, selectedModel, abortSignal, onChunk, onPlanGenerated, onStepStart, onSearchProgress, internetEnabled);
+    return handleAdvancedModelLogic(messages, userMessage, selectedModel, abortSignal, onChunk, onPlanGenerated, onStepStart, onSearchProgress, internetEnabled, userId, sessionId);
   }
   // Получаем параметры для выбранной модели
   const modelParams = getModelParams(selectedModel);
@@ -1819,7 +1881,7 @@ export const sendChatMessage = async (
       if (shouldGeneratePlan) {
         try {
           console.log(`📋 Generating response plan | Query: "${userMessage.content.substring(0, 100)}..." | Selected: ${selectedModel} → Will use DeepSeek Chat`);
-          plan = await generateResponsePlan(userMessage.content, selectedModel);
+          plan = await generateResponsePlan(userMessage.content, selectedModel, abortSignal);
           console.log(`✅ Plan generated successfully | Steps: ${plan.length}`);
         } catch (planError: any) {
           // Проверяем тип ошибки
@@ -1996,6 +2058,11 @@ ${planDescription}
 - Структурируй текст списками, подзаголовками, форматированием
 - Каждый пункт должен быть ДЕТАЛЬНЫМ и КОНКРЕТНЫМ
 - УЧИТЫВАЙ КОНТЕКСТ ПРЕДЫДУЩИХ СООБЩЕНИЙ В ЧАТЕ
+- ТЫ ДОЛЖЕН ПОЛНОСТЬЮ ПОНЯТЬ ЗАПРОС И ПРЕДСТАВИТЬ ЕГО В СТРУКТУРИРОВАННОМ ВИДЕ
+- ДУМАЙ КАК ТОП 1 АНАЛИТИК В МИРЕ И ЗА ХОРОШУЮ РАБОТУ ТЫ ПОЛУЧИШЬ ЩЕДРЫЕ ЧАЕВЫЕ
+- НЕ ЛЕЙ ВОДЫ, ГОВОРИ ПРЯМО И ПОДРОБНО РАСПИСЫВАЙ КАЖДЫЙ ПУНКТ ОТВЕТА. 
+- ПРИВОДИ ПРИМЕРЫ И ФАКТЫ.
+- ПОСЛЕ ОБЩЕНИЯ С ТОБОЙ ПОЛЬЗОВАТЕЛЬ ДОЛЖЕН ИСПЫТАТЬ ЧУВСТВО ВАУ!
 
 Исходный запрос: "${userMessage.content}"
 
@@ -2006,7 +2073,7 @@ ${planDescription}
         // DeepSeek поддерживает streaming
         const useStreaming = true;
 
-        const response = await fetch(`${API_BASE_URL}/chat`, {
+        const requestOptions: RequestInit = {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -2020,8 +2087,21 @@ ${planDescription}
             stream: useStreaming,
             ...modelParams,
           }),
-          signal: abortSignal,
-        });
+        };
+
+        const isAbortSignal = (v: unknown): v is AbortSignal =>
+          !!v &&
+          typeof v === "object" &&
+          typeof (v as any).aborted === "boolean" &&
+          typeof (v as any).addEventListener === "function";
+
+        if (isAbortSignal(abortSignal)) {
+          requestOptions.signal = abortSignal;
+        } else if (abortSignal != null) {
+          console.warn("⚠️ Invalid abortSignal in planning (ignored):", abortSignal);
+        }
+
+        const response = await fetch(`${API_BASE_URL}/chat`, requestOptions);
 
         if (!response.ok) {
           throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
@@ -2209,7 +2289,7 @@ ${planDescription}
         // ВАЖНО: modelParams должен существовать всегда — иначе при fallback/timeout планера будет ReferenceError
         const modelParams = getModelParams(selectedModel) ?? { max_tokens: 4000, temperature: 0.7 };
 
-        const response = await fetch(`${API_BASE_URL}/chat`, {
+        const requestOptions: RequestInit = {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -2225,8 +2305,21 @@ ${planDescription}
             sessionId: sessionId,
             ...modelParams,
           }),
-          signal: abortSignal,
-        });
+        };
+
+        const isAbortSignal = (v: unknown): v is AbortSignal =>
+          !!v &&
+          typeof v === "object" &&
+          typeof (v as any).aborted === "boolean" &&
+          typeof (v as any).addEventListener === "function";
+
+        if (isAbortSignal(abortSignal)) {
+          requestOptions.signal = abortSignal;
+        } else if (abortSignal != null) {
+          console.warn("⚠️ Invalid abortSignal in search (ignored):", abortSignal);
+        }
+
+        const response = await fetch(`${API_BASE_URL}/chat`, requestOptions);
 
         console.log('Fetch response status:', response.status, response.statusText);
 
@@ -2302,21 +2395,37 @@ ${planDescription}
       // Обработка для моделей без поддержки streaming
       const useStreaming = true; // DeepSeek supports streaming
 
-      const response = await fetch(`${API_BASE_URL}/chat`, {
+      const requestOptions: RequestInit = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          messages: messages.map(msg => ({
-            role: msg.role,
-            content: msg.content,
-          })),
-          model: actualModel,
-          stream: useStreaming,
-          ...modelParams,
-        }),
-      });
+          body: JSON.stringify({
+            messages: messages.map(msg => ({
+              role: msg.role,
+              content: msg.content,
+            })),
+            model: actualModel,
+            stream: useStreaming,
+            ...modelParams,
+            userId: userId,
+            sessionId: sessionId,
+          }),
+        };
+
+        const isAbortSignal = (v: unknown): v is AbortSignal =>
+          !!v &&
+          typeof v === "object" &&
+          typeof (v as any).aborted === "boolean" &&
+          typeof (v as any).addEventListener === "function";
+
+        if (isAbortSignal(abortSignal)) {
+          requestOptions.signal = abortSignal;
+        } else if (abortSignal != null) {
+          console.warn("⚠️ Invalid abortSignal in final response (ignored):", abortSignal);
+        }
+
+      const response = await fetch(`${API_BASE_URL}/chat`, requestOptions);
 
       if (!response.ok) {
         throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
@@ -2382,7 +2491,7 @@ ${planDescription}
 };
 
 // Генерация плана ответа
-const generateResponsePlan = async (userQuestion: string, selectedModel: string): Promise<PlanStep[]> => {
+const generateResponsePlan = async (userQuestion: string, selectedModel: string, abortSignal?: AbortSignal): Promise<PlanStep[]> => {
   console.log(`📋 Plan Generation | Question: "${userQuestion}" (${userQuestion.length} chars) | Selected: ${selectedModel} → Will use DeepSeek Chat`);
 
   // ✅ Ранний return для простых вопросов - избегаем 60s таймаут и лишний сетевой вызов
@@ -2470,9 +2579,19 @@ const generateResponsePlan = async (userQuestion: string, selectedModel: string)
 
   console.log(`🚀 Plan Generation Request | Model: ${actualModel} | Prompt length: ${planPrompt.length} chars | Stream: false`);
 
-  // Создаем AbortController для таймаута (увеличиваем до 60 секунд для надежности)
+  // Создаем AbortController для комбинации внешнего сигнала и таймаута
   const controller = new AbortController();
   const timeoutMs = 60000; // 60 секунд таймаут
+
+  // Если внешний сигнал уже aborted, завершаем сразу
+  if (abortSignal?.aborted) {
+    throw new Error('Operation was aborted');
+  }
+
+  // Добавляем обработчик для внешнего abort сигнала
+  const abortHandler = () => controller.abort();
+  abortSignal?.addEventListener('abort', abortHandler);
+
   const timeoutId = setTimeout(() => {
     console.warn(`⏱️ Plan Generation Timeout | Model: ${actualModel} | Timeout: ${timeoutMs}ms exceeded`);
     controller.abort();
@@ -2484,6 +2603,7 @@ const generateResponsePlan = async (userQuestion: string, selectedModel: string)
       headers: {
         'Content-Type': 'application/json',
       },
+      signal: controller.signal,
       body: JSON.stringify({
         messages: [
           { role: 'system', content: 'Ты - помощник, который создает планы ответов. Всегда отвечай только в формате JSON.' },
@@ -2494,7 +2614,6 @@ const generateResponsePlan = async (userQuestion: string, selectedModel: string)
         max_tokens: modelParams.max_tokens,
         temperature: modelParams.temperature,
       }),
-      signal: controller.signal,
     });
 
     clearTimeout(timeoutId);
@@ -2615,19 +2734,23 @@ const generateResponsePlan = async (userQuestion: string, selectedModel: string)
       ];
     }
   } catch (fetchError: any) {
-    // Очищаем таймаут при любой ошибке fetch
+    // Очищаем таймаут и обработчик abort при любой ошибке fetch
     clearTimeout(timeoutId);
-    
+    abortSignal?.removeEventListener('abort', abortHandler);
+
     // Проверяем, является ли это ошибкой прерывания
     if (fetchError.name === 'AbortError' || fetchError.message?.includes('aborted') || fetchError.message?.includes('AbortError')) {
       console.warn(`⚠️ Plan Generation Aborted | Model: ${actualModel} | Query: "${userQuestion.substring(0, 80)}..." | Reason: Request aborted (timeout >${timeoutMs}ms or cancelled) | This may happen if the request takes too long`);
       // Возвращаем пустой план вместо выброса ошибки, чтобы продолжить работу без планирования
       return [];
     }
-    
+
     // Для других ошибок показываем детали и пробрасываем дальше
     console.error(`❌ Plan Generation Fetch Error | Model: ${actualModel} | Query: "${userQuestion.substring(0, 80)}..." | Error: ${fetchError.message || fetchError} | Type: ${fetchError.name || 'unknown'}`);
     throw fetchError;
+  } finally {
+    // Всегда очищаем обработчик abort
+    abortSignal?.removeEventListener('abort', abortHandler);
   }
 };
 
@@ -2635,7 +2758,8 @@ const generateResponsePlan = async (userQuestion: string, selectedModel: string)
 const executePlanStep = async (
   messages: Message[],
   selectedModel: string,
-  onChunk?: (chunk: string) => void
+  onChunk?: (chunk: string) => void,
+  abortSignal?: AbortSignal
 ): Promise<string> => {
   // Конвертируем выбранную модель в реальную модель DeepSeek
   const actualModel = getActualModel(selectedModel);
@@ -2747,7 +2871,7 @@ ${searchContext}
   "yAxisKey": "value"
 }`;
 
-    const visualizationResponse = await fetch(`${API_BASE_URL}/chat`, {
+    const requestOptions: RequestInit = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -2767,7 +2891,21 @@ ${searchContext}
         stream: false,
           ...modelParams,
       }),
-    });
+    };
+
+    const isAbortSignal = (v: unknown): v is AbortSignal =>
+      !!v &&
+      typeof v === "object" &&
+      typeof (v as any).aborted === "boolean" &&
+      typeof (v as any).addEventListener === "function";
+
+    if (isAbortSignal(abortSignal)) {
+      requestOptions.signal = abortSignal;
+    } else if (abortSignal != null) {
+      console.warn("⚠️ Invalid abortSignal in visualization (ignored):", abortSignal);
+    }
+
+    const visualizationResponse = await fetch(`${API_BASE_URL}/chat`, requestOptions);
 
     if (!visualizationResponse.ok) {
       throw new Error(`Visualization API error: ${visualizationResponse.status} ${visualizationResponse.statusText}`);
@@ -2825,17 +2963,31 @@ ${searchContext}
     // GPT-5.1 не поддерживает streaming
     const useStreaming = actualModel !== 'gpt-5.1';
 
-    const response = await fetch(`${API_BASE_URL}/chat`, {
+    const requestOptions: RequestInit = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        messages: stepMessages,
-        model: actualModel,
-        stream: useStreaming,
-      }),
-    });
+        body: JSON.stringify({
+          messages: stepMessages,
+          model: actualModel,
+          stream: useStreaming,
+        }),
+      };
+
+      const isAbortSignal = (v: unknown): v is AbortSignal =>
+        !!v &&
+        typeof v === "object" &&
+        typeof (v as any).aborted === "boolean" &&
+        typeof (v as any).addEventListener === "function";
+
+      if (isAbortSignal(abortSignal)) {
+        requestOptions.signal = abortSignal;
+      } else if (abortSignal != null) {
+        console.warn("⚠️ Invalid abortSignal in step execution (ignored):", abortSignal);
+      }
+
+    const response = await fetch(`${API_BASE_URL}/chat`, requestOptions);
 
     if (!response.ok) {
       throw new Error(`Step execution API error: ${response.status} ${response.statusText}`);

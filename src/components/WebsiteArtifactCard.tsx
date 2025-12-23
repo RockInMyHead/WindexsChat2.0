@@ -8,55 +8,135 @@ import type { Artifact } from "@/lib/api";
 function toSandpackFiles(artifactFiles: Record<string, string>) {
   const files: Record<string, { code: string }> = {};
 
-  // Sandpack ожидает без ведущего '/', и стандартно под Vite template
+  const hasReactVite =
+    Boolean(artifactFiles["main.tsx"] || artifactFiles["App.tsx"] || artifactFiles["/src/main.tsx"] || artifactFiles["src/main.tsx"]);
+
+  const put = (path: string, code: string) => {
+    const p = path.startsWith("/") ? path : `/${path}`;
+    files[p] = { code };
+  };
+
+  // 1) Нормализация + корректная раскладка под Vite template
   for (const [path, code] of Object.entries(artifactFiles)) {
-    const normalized = path.startsWith("/") ? path.slice(1) : path;
-    files[`/${normalized}`] = { code };
+    const normalized = path.replace(/^\/+/, ""); // убираем ведущие /
+
+    // package.json / конфиги оставляем в корне как есть
+    if (
+      normalized === "package.json" ||
+      normalized === "vite.config.ts" ||
+      normalized === "tsconfig.json" ||
+      normalized === "src/vite-env.d.ts" ||
+      normalized === "vite-env.d.ts"
+    ) {
+      put(`/${normalized}`, code);
+      continue;
+    }
+
+    // index.html всегда в корне
+    if (normalized === "index.html") {
+      put("/index.html", code);
+      continue;
+    }
+
+    // Для React/Vite: корневые исходники перекидываем в /src/*
+    if (hasReactVite && !normalized.includes("/")) {
+      const isSource =
+        normalized.endsWith(".ts") ||
+        normalized.endsWith(".tsx") ||
+        normalized.endsWith(".css") ||
+        normalized.endsWith(".js") ||
+        normalized.endsWith(".jsx");
+
+      if (isSource) {
+        put(`/src/${normalized}`, code);
+        continue;
+      }
+    }
+
+    // Остальное — как есть
+    put(`/${normalized}`, code);
   }
 
-  // Страховка: если нет package.json — добавим минимальный
-  if (!files["/package.json"]) {
-    files["/package.json"] = {
-      code: JSON.stringify(
-        {
-          name: "artifact-preview",
-          private: true,
-          scripts: { dev: "vite", build: "vite build", preview: "vite preview" },
-          dependencies: { react: "^18.2.0", "react-dom": "^18.2.0" },
-          devDependencies: {
-            vite: "^5.0.0",
-            "@vitejs/plugin-react": "^4.0.0",
-            typescript: "^5.0.0"
-          }
-        },
-        null,
-        2
-      )
-    };
+  // 2) package.json: всегда гарантируем deps + esbuild-wasm
+  const ensurePackageJson = (raw?: string) => {
+    let pkg: any;
+    try {
+      pkg = raw ? JSON.parse(raw) : {};
+    } catch {
+      pkg = {};
+    }
+
+    pkg.name ||= "artifact-preview";
+    pkg.private = true;
+
+    pkg.scripts ||= { dev: "vite", build: "vite build", preview: "vite preview" };
+
+    pkg.dependencies ||= {};
+    pkg.dependencies["react"] ||= "^18.2.0";
+    pkg.dependencies["react-dom"] ||= "^18.2.0";
+    // КЛЮЧЕВОЕ: Vite в nodebox требует установленный esbuild-wasm
+    pkg.dependencies["esbuild-wasm"] ||= "^0.21.5";
+
+    pkg.devDependencies ||= {};
+    pkg.devDependencies["vite"] ||= "^5.4.9";
+    pkg.devDependencies["@vitejs/plugin-react"] ||= "^4.0.0";
+    pkg.devDependencies["typescript"] ||= "^5.0.0";
+
+    return JSON.stringify(pkg, null, 2);
+  };
+
+  put("/package.json", ensurePackageJson(files["/package.json"]?.code));
+
+  // 3) Tailwind: отключаем в превью (иначе нужен postcss/tailwind config)
+  const cssKeys = ["/src/index.css", "/index.css"];
+  for (const cssKey of cssKeys) {
+    if (files[cssKey]?.code?.includes("@tailwind")) {
+      files[cssKey] = { code: "/* preview mode: tailwind disabled */\n" };
+    }
   }
 
-  // Обработка Tailwind: для превью отключаем, чтобы не требовался config
-  const cssKey = "/src/index.css";
-  if (files[cssKey]?.code?.includes("@tailwind")) {
-    files[cssKey] = { code: "/* preview mode: tailwind disabled */\n" };
-  }
-
-  // Vite config (минимум)
+  // 4) Минимальные конфиги под Vite/TS
   if (!files["/vite.config.ts"]) {
-    files["/vite.config.ts"] = {
-      code: `import { defineConfig } from "vite";
+    put(
+      "/vite.config.ts",
+      `import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 export default defineConfig({ plugins: [react()] });`
-    };
+    );
   }
 
-  // tsconfig (минимум)
   if (!files["/tsconfig.json"]) {
-    files["/tsconfig.json"] = { code: `{"compilerOptions":{"jsx":"react-jsx","target":"ES2020","module":"ESNext","moduleResolution":"Bundler","strict":false,"types":["vite/client"]}}` };
+    put(
+      "/tsconfig.json",
+      `{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": false,
+    "types": ["vite/client"]
+  }
+}`
+    );
   }
 
   if (!files["/src/vite-env.d.ts"]) {
-    files["/src/vite-env.d.ts"] = { code: `/// <reference types="vite/client" />` };
+    put("/src/vite-env.d.ts", `/// <reference types="vite/client" />`);
+  }
+
+  // 5) Страховка: если React/Vite артефакт, но нет /src/main.tsx — попробуем перекинуть
+  if (hasReactVite && !files["/src/main.tsx"] && files["/main.tsx"]) {
+    files["/src/main.tsx"] = files["/main.tsx"];
+    delete files["/main.tsx"];
+  }
+  if (hasReactVite && !files["/src/App.tsx"] && files["/App.tsx"]) {
+    files["/src/App.tsx"] = files["/App.tsx"];
+    delete files["/App.tsx"];
+  }
+  if (hasReactVite && !files["/src/index.css"] && files["/index.css"]) {
+    files["/src/index.css"] = files["/index.css"];
+    delete files["/index.css"];
   }
 
   return files;
@@ -207,6 +287,11 @@ export function WebsiteArtifactCard({ artifact, onUpdate }: WebsiteArtifactCardP
             <Sandpack
               template="vite-react-ts"
               files={toSandpackFiles(artifact.files)}
+              customSetup={{
+                dependencies: {
+                  "esbuild-wasm": "^0.21.5",
+                },
+              }}
               options={{
                 showNavigator: true,
                 showTabs: true,

@@ -3,8 +3,8 @@ import { apiClient } from '@/lib/api';
 import { type TokenCost } from '@/lib/openai';
 
 interface User {
-  id: string;
-  name: string;
+  id: number;
+  username: string;
   email: string;
 }
 
@@ -27,7 +27,7 @@ export const useBalance = ({ user, onTokenCost }: UseBalanceOptions = {}): UseBa
   const loadBalance = useCallback(async (userObj: User) => {
     setIsLoading(true);
     try {
-      const response = await apiClient.get<{ balance: number }>(`/api/users/${userObj.id}/balance`);
+      const response = await apiClient.get<{ balance: number }>(`/users/${userObj.id}/balance`);
       setBalance(response.balance);
     } catch (error) {
       console.error('Failed to load balance:', error);
@@ -42,9 +42,8 @@ export const useBalance = ({ user, onTokenCost }: UseBalanceOptions = {}): UseBa
     if (user) {
       await loadBalance(user);
     } else {
-      // Для демо создаем временного пользователя
-      const demoUser = { id: '1', name: 'Demo User', email: 'demo@windexs.ai' };
-      await loadBalance(demoUser);
+      // Для демо устанавливаем баланс без API запроса
+      setBalance(100);
     }
   }, [user, loadBalance]);
 
@@ -53,7 +52,7 @@ export const useBalance = ({ user, onTokenCost }: UseBalanceOptions = {}): UseBa
 
     try {
       const response = await apiClient.post<{ success: boolean; newBalance: number }>(
-        `/api/users/${user.id}/deduct-tokens`,
+        `/users/${user.id}/deduct-tokens`,
         cost
       );
 
@@ -76,9 +75,8 @@ export const useBalance = ({ user, onTokenCost }: UseBalanceOptions = {}): UseBa
     if (user) {
       loadBalance(user);
     } else {
-      // Для демо создаем временного пользователя
-      const demoUser = { id: '1', name: 'Demo User', email: 'demo@windexs.ai' };
-      loadBalance(demoUser);
+      // Для демо устанавливаем баланс без API запроса
+      setBalance(100);
     }
   }, [user, loadBalance]);
 
