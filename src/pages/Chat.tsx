@@ -168,6 +168,13 @@ const Chat = () => {
   // Инициализация сессии и загрузка сообщений
   useEffect(() => {
     const initializeSession = async () => {
+      // Проверяем аутентификацию пользователя
+      if (!user) {
+        console.log('User not authenticated, redirecting to login...');
+        navigate('/');
+        return;
+      }
+
       // Проверяем, есть ли initialMessage
       const initialMessage = initialChatMessage || location.state?.initialMessage;
 

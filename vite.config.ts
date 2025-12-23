@@ -11,10 +11,6 @@ export default defineConfig(({ mode }) => ({
     port: 8081,
     strictPort: false,
     allowedHosts: [
-      'windexs-chat.eu.ngrok.io',
-      'cute-elliot-distinctively.ngrok-free.dev',
-      '.ngrok-free.dev',
-      '.ngrok.io',
       'localhost',
       '127.0.0.1'
     ],

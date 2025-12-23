@@ -1676,7 +1676,6 @@ app.use((req, res, next) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on http://localhost:${PORT} (accessible from all interfaces)`);
   console.log(`📦 Serving static files from dist/`);
-  console.log(`🌐 Public access via ngrok tunnel`);
 });
 
 // Graceful shutdown

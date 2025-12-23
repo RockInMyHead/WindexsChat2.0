@@ -1,5 +1,6 @@
 import { MessageSquare, User, Plus, Trash2 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   Sidebar,
   SidebarContent,
@@ -25,12 +26,18 @@ interface ChatSidebarProps {
 
 export function ChatSidebar({ onSelectChat, currentSessionId, refreshTrigger, onChatDeleted }: ChatSidebarProps) {
   const { state } = useSidebar();
+  const { user } = useAuth();
   const collapsed = state === "collapsed";
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const loadChatSessions = async () => {
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+
       try {
         const sessions = await apiClient.getAllSessions();
         setChatSessions(sessions);
@@ -130,7 +137,11 @@ export function ChatSidebar({ onSelectChat, currentSessionId, refreshTrigger, on
           )}
           <SidebarGroupContent>
             <SidebarMenu>
-              {loading ? (
+              {!user ? (
+                <div className="px-2 py-4 text-center text-muted-foreground">
+                  {!collapsed && <span className="text-xs">Войдите в систему</span>}
+                </div>
+              ) : loading ? (
                 <div className="px-2 py-4 text-center text-muted-foreground">
                   {!collapsed && <span className="text-xs">Загрузка...</span>}
                 </div>
