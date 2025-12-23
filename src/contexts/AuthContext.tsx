@@ -54,6 +54,7 @@ export const AuthProvider = ({ children }: AuthProviderProps) => {
         console.error('Error parsing saved user:', error);
         localStorage.removeItem('user');
         localStorage.removeItem('isAuthenticated');
+        localStorage.removeItem('userId');
       }
     }
   }, []);

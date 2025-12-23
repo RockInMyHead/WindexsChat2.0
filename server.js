@@ -136,6 +136,22 @@ app.use('/api/market', marketRouter);
 // API Routes
 
 // Создать новую сессию чата
+// Публичный роут для создания сессий (для демо)
+app.post('/api/sessions/public', (req, res) => {
+  try {
+    const { title = 'Новый чат' } = req.body;
+    console.log(`📝 POST /api/sessions/public | Title: "${title}" | Origin: ${req.headers.origin || 'none'}`);
+
+    // Создаем сессию для демо пользователя (ID: 1)
+    const sessionId = DatabaseService.createSession(title, 1);
+    console.log(`✅ Public session created | ID: ${sessionId} | Title: "${title}"`);
+    res.json({ sessionId });
+  } catch (error) {
+    console.error('❌ POST /api/sessions/public error:', error);
+    res.status(500).json({ error: 'Failed to create session' });
+  }
+});
+
 app.post('/api/sessions', requireUser, (req, res) => {
   try {
     const { title = 'Новый чат' } = req.body;
@@ -144,8 +160,21 @@ app.post('/api/sessions', requireUser, (req, res) => {
     console.log(`✅ Session created | ID: ${sessionId} | User: ${req.user.id} | Title: "${title}"`);
     res.json({ sessionId });
   } catch (error) {
-    console.error('Error creating session:', error);
+    console.error('❌ POST /api/sessions error:', error);
     res.status(500).json({ error: 'Failed to create session' });
+  }
+});
+
+// Публичный роут для получения сессий (для демо)
+app.get('/api/sessions/public', (req, res) => {
+  try {
+    // Возвращаем сессии демо пользователя (ID: 1)
+    const sessions = DatabaseService.getAllSessions(1);
+    console.log(`📋 GET /api/sessions/public | Origin: ${req.headers.origin || 'none'} | Returning ${sessions.length} session(s)`);
+    res.json(sessions);
+  } catch (error) {
+    console.error('❌ GET /api/sessions/public error:', error);
+    res.status(500).json({ error: 'Failed to get sessions' });
   }
 });
 
@@ -156,7 +185,7 @@ app.get('/api/sessions', requireUser, (req, res) => {
     console.log(`📋 GET /api/sessions | User: ${req.user.id} | Origin: ${req.headers.origin || 'none'} | Returning ${sessions.length} session(s)`);
     res.json(sessions);
   } catch (error) {
-    console.error('Error getting sessions:', error);
+    console.error('❌ GET /api/sessions error:', error);
     res.status(500).json({ error: 'Failed to get sessions' });
   }
 });

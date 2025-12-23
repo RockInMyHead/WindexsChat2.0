@@ -53,7 +53,9 @@ class ApiClient {
 
   // Создать новую сессию чата
   async createSession(title: string = 'Новый чат'): Promise<{ sessionId: number }> {
-    return this.request('/sessions', {
+    // Используем публичный роут, если пользователь не аутентифицирован
+    const endpoint = localStorage.getItem("userId") ? '/sessions' : '/sessions/public';
+    return this.request(endpoint, {
       method: 'POST',
       body: JSON.stringify({ title }),
     });
@@ -61,7 +63,9 @@ class ApiClient {
 
   // Получить все сессии
   async getAllSessions(): Promise<ChatSession[]> {
-    return this.request('/sessions');
+    // Используем публичный роут, если пользователь не аутентифицирован
+    const endpoint = localStorage.getItem("userId") ? '/sessions' : '/sessions/public';
+    return this.request(endpoint);
   }
 
   // Получить сообщения сессии
