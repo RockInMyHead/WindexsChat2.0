@@ -1785,6 +1785,57 @@ const systemPromptProductStatic = `
 
 
 
+## ОБЯЗАТЕЛЬНО: CSS АРХИТЕКТУРА
+
+ОБЯЗАТЕЛЬНО использовать следующий CSS код в styles.css:
+
+Основная структура:
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; background: #fff; }
+
+Главный контейнер:
+.container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+
+Сетка секций:
+.section { padding: 60px 0; }
+.grid { display: grid; gap: 20px; }
+@media (min-width: 768px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1024px) { .grid { grid-template-columns: repeat(3, 1fr); } }
+
+Типографика (КРИТИЧНО):
+h1, h2, h3, h4, h5, h6 { margin: 0 0 1rem 0; font-weight: 600; line-height: 1.2; }
+h1 { font-size: clamp(2rem, 5vw, 3rem); }
+h2 { font-size: clamp(1.5rem, 4vw, 2.25rem); }
+h3 { font-size: clamp(1.25rem, 3vw, 1.75rem); }
+h4 { font-size: clamp(1.125rem, 2.5vw, 1.5rem); }
+h5 { font-size: clamp(1rem, 2vw, 1.25rem); }
+h6 { font-size: 1rem; }
+p { margin: 0 0 1rem 0; }
+.card h1, .card h2 { font-size: 1.25rem; font-weight: 600; }
+
+Навигация и меню (КРИТИЧНО):
+.nav-toggle { display: none; position: fixed; top: 20px; right: 20px; z-index: 1001; background: #333; color: white; border: none; padding: 10px; border-radius: 4px; cursor: pointer; }
+.nav-menu { position: fixed; top: 0; left: 0; width: 100%; height: 100vh; background: rgba(0, 0, 0, 0.8); z-index: 1000; transform: translateX(-100%); transition: transform 0.3s ease; display: flex; align-items: center; justify-content: center; }
+.nav-menu.active { transform: translateX(0); }
+.nav-menu ul { list-style: none; padding: 0; margin: 0; text-align: center; }
+.nav-menu li { margin: 20px 0; }
+.nav-menu a { color: white; text-decoration: none; font-size: 1.5rem; padding: 10px 20px; display: block; }
+@media (max-width: 767px) { .nav-toggle { display: block; } }
+.nav-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100vh; background: rgba(0, 0, 0, 0.5); opacity: 0; visibility: hidden; transition: opacity 0.3s ease, visibility 0.3s ease; z-index: 999; }
+.nav-overlay.active { opacity: 1; visibility: visible; }
+
+Карточки и компоненты:
+.card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+.btn { display: inline-block; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border: none; border-radius: 4px; cursor: pointer; transition: background 0.2s ease; }
+.btn:hover { background: #0056b3; }
+
+JavaScript для меню (ОБЯЗАТЕЛЬНО добавить в app.js):
+const navToggle = document.querySelector('.nav-toggle');
+const navMenu = document.querySelector('.nav-menu');
+const navOverlay = document.querySelector('.nav-overlay');
+navToggle.addEventListener('click', () => { navMenu.classList.toggle('active'); navOverlay.classList.toggle('active'); });
+navOverlay.addEventListener('click', () => { navMenu.classList.remove('active'); navOverlay.classList.remove('active'); });
+
 ## ОГРАНИЧЕНИЯ ПО ФАЙЛАМ
 
 - РОВНО 3 файла:
