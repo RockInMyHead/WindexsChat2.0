@@ -1710,6 +1710,36 @@ const systemPromptProductStatic = `
 
 - prefers-reduced-motion
 
+### КРИТИЧНЫЕ CSS ТРЕБОВАНИЯ:
+
+1. **МЕНЮ (Бургер)**:
+   - МЕНЮ ДОЛЖНО БЫТЬ ЗАКРЫТО по умолчанию
+   - ДОЛЖЕН БЫТЬ overlay с полупрозрачным фоном при открытии
+   - ДОЛЖЕН БЫТЬ transition/animation для открытия/закрытия
+   - НЕТ рисования меню поверх контента без overlay
+   - Правильное состояние: transform: translateX(-100%) для закрытого
+
+2. **ТИПОГРАФИКА**:
+   - ЗАГОЛОВКИ ДОЛЖНЫ ИСПОЛЬЗОВАТЬ clamp() для адаптивности
+   - h1: clamp(2rem, 5vw, 3.5rem) - не гигантские
+   - h2: clamp(1.5rem, 4vw, 2.5rem)
+   - h3: clamp(1.25rem, 3vw, 2rem)
+   - В КАРТОЧКАХ использовать h3/h4, НЕ h1/h2
+   - Глобальные стили h1,h2 сбросить: margin: 0; line-height: 1.2
+
+3. **СЕТКА И КОНТЕЙНЕРЫ**:
+   - ГЛАВНЫЙ КОНТЕЙНЕР: max-width: 1200px; margin: 0 auto; padding: 0 1rem
+   - СЕКЦИИ: padding: 3rem 0; или 4rem 0
+   - КАРТОЧКИ: padding: 1.5rem; border-radius: 8px; box-shadow
+   - ГРИД: grid-template-columns: repeat(auto-fit, minmax(300px, 1fr))
+   - НЕТ "наезда" элементов на края экрана
+
+4. **ОБЩИЕ СТИЛИ**:
+   - body: margin: 0; font-family: system-ui, sans-serif
+   - img, button: reset margins и paddings
+   - focus: outline: 2px solid #007bff; outline-offset: 2px
+   - mobile: padding уменьшить до 0.5rem
+
 
 
 ---
